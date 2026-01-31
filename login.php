@@ -46,7 +46,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     $stmt = $pdo->prepare("INSERT INTO system_logs (user_id, action, table_name, record_id, ip_address, user_agent) VALUES (?, 'LOGIN', 'users', ?, ?, ?)");
                     $stmt->execute([$user['user_id'], $user['user_id'], $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT']]);
                     // Redirect based on role
-                    if (in_array($user['role'], ['staff', 'admin'], true)) {
+                    if ($user['role'] === 'admin') {
+                        // Admins see the technical system tools
+                        header('Location: admin_view/members.php');
+                    } elseif ($user['role'] === 'staff') {
                         header('Location: staff_view/dashboard.php');
                     } elseif ($user['role'] === 'faculty') {
                         header('Location: faculty_view/dashboard.php');
