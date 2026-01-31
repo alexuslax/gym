@@ -269,8 +269,8 @@
 
   // Get pending members separately - query users table for pending approvals
   // These are users who registered but haven't been approved yet (no member_id assigned)
-  // Include legacy 'member' and new 'student' roles
-  $pending_where_conditions = ["is_active = ?", "role IN ('member','student')"];
+  // Include legacy and new roles that may be pending approval
+  $pending_where_conditions = ["is_active = ?", "role IN ('member','student','faculty','trainer','staff')"];
   $pending_params = [0];
   
   // Apply search filter to pending members if provided
