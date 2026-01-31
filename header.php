@@ -105,10 +105,10 @@ if (!$is_subdirectory && $role) {
 // If we're already in a subdirectory, determine nav_prefix based on role
 // Staff should always navigate to staff_view, even when viewing trainer_view pages
 if ($is_subdirectory) {
-    if ($role === 'staff' && strpos($script_path, '/faculty_view/') !== false) {
+    if (in_array($role, ['staff','admin'], true) && strpos($script_path, '/faculty_view/') !== false) {
         // Staff viewing faculty_view pages - navigate to staff_view
         $nav_prefix = '../staff_view/';
-    } elseif ($role === 'staff' && strpos($script_path, '/staff_view/') !== false) {
+    } elseif (in_array($role, ['staff','admin'], true) && strpos($script_path, '/staff_view/') !== false) {
         // Staff in staff_view - use current directory
         $nav_prefix = '';
     } elseif ($role === 'faculty' && strpos($script_path, '/faculty_view/') !== false) {
@@ -160,7 +160,7 @@ if ($is_subdirectory) {
     <ul class="navbar-nav">
       <li><a href="<?php echo $nav_prefix; ?>dashboard.php">Home</a></li>
 
-      <?php if ($role === 'staff'): ?>
+    <?php if (in_array($role, ['staff','admin'], true)): ?>
         <li><a href="<?php echo $nav_prefix; ?>members.php">Members</a></li>
         <li><a href="<?php echo $nav_prefix; ?>attendance.php">Attendance</a></li>
         <li><a href="<?php echo $nav_prefix; ?>equipment.php">Equipment</a></li>
@@ -226,7 +226,7 @@ if ($is_subdirectory) {
 
       <li><a href="<?php echo $nav_prefix; ?>dashboard.php">Home</a></li>
 
-      <?php if ($role === 'staff'): ?>
+    <?php if (in_array($role, ['staff','admin'], true)): ?>
       <li><a href="<?php echo $nav_prefix; ?>members.php">Members</a></li>
       <li><a href="<?php echo $nav_prefix; ?>attendance.php">Attendance</a></li>
       <li><a href="<?php echo $nav_prefix; ?>equipment.php">Equipment</a></li>
