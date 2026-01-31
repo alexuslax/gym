@@ -75,6 +75,33 @@
                             $pending_data['hire_date'] ?? date('Y-m-d'),
                             $pending_data['profile_picture'] ?? null
                         ]);
+                      } elseif ($user['role'] === 'staff') {
+                        // Generate staff ID
+                        $staff_id = generateID('STF', 'staff', 'staff_id');
+
+                        // Insert into staff table
+                        $stmt = $pdo->prepare("INSERT INTO staff (
+                          staff_id, username, first_name, last_name, middle_name,
+                          gender, contact_number, email, address, date_of_birth,
+                          staff_number, profile_picture, status, hire_date, user_id
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Active', ?, ?)");
+
+                        $stmt->execute([
+                          $staff_id,
+                          $user['username'],
+                          $pending_data['first_name'],
+                          $pending_data['last_name'],
+                          $pending_data['middle_name'] ?? '',
+                          $pending_data['gender'],
+                          $pending_data['contact_number'],
+                          $user['email'],
+                          $pending_data['address'],
+                          $pending_data['date_of_birth'],
+                          $pending_data['staff_number'] ?? '',
+                          $pending_data['profile_picture'] ?? null,
+                          $pending_data['registration_date'] ?? date('Y-m-d'),
+                          $user['user_id']
+                        ]);
                     }
                     
                     // Activate user account and clear pending data
