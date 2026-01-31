@@ -737,50 +737,35 @@ if (isset($_GET['assignments'])) {
                                                 } elseif ($experience->m > 0) {
                                                     echo $experience->m . ' month' . ($experience->m > 1 ? 's' : '');
                                                 } else {
-                                                    echo '<1 month';
-                                                }
-                                            } else {
-                                                echo 'N/A';
-                                            }
-                                            ?>
-                                        </p>
-                                    </div>
-                                </div>
+                                                <?php
+                                                session_start();
+                                                require_once '../config/functions.php';
+                                                $page_title = 'System Diagnostics - UEP Fitness Gym';
+                                                include '../header.php';
+                                                ?>
 
-                                <div class="flex items-center justify-between pt-4 border-t border-gray-200">
-                                    <?php
-                                    $status_badges = [
-                                        'Active' => 'badge-green',
-                                        'Inactive' => 'badge-red',
-                                        'On Leave' => 'badge-yellow'
-                                    ];
-                                    $badge_class = $status_badges[$trainer['status']] ?? 'badge-gray';
-                                    ?>
-                                    <span class="badge <?php echo $badge_class; ?>">
-                                        <?php echo htmlspecialchars($trainer['status']); ?>
-                                    </span>
-                                    <a href="../trainer_profile.php?id=<?php echo $trainer['trainer_id']; ?>&return=staff_view/trainers.php" class="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white rounded-xl shadow-md hover:shadow-lg transition-all duration-200" style="background: linear-gradient(to right, #6366f1, #4f46e5);" 
-                                       onmouseover="this.style.background='linear-gradient(to right, #4f46e5, #4338ca)'; this.style.transform='scale(1.02)'"
-                                       onmouseout="this.style.background='linear-gradient(to right, #6366f1, #4f46e5)'; this.style.transform='scale(1)'">
-                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4">
-                                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0zM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632z"/>
-                                        </svg>
-                                        View Profile
-                                    </a>
-                                </div>
-                            </div>
-                        </div>
-                    <?php endforeach; ?>
-                </div>
-            <?php endif; ?>
-        </div>
+                                                <style>
+                                                    .page-header { margin-bottom: 1.5rem; }
+                                                    .tools-list { display:flex; flex-direction:column; gap:0.75rem; }
+                                                    .tool-item { padding:0.75rem 1rem; border-radius:0.5rem; background:#f8fafc; border:1px solid #e2e8f0; }
+                                                </style>
 
-        <!-- Pending Trainers Cards -->
-        <div id="pending-trainers-tab" class="tab-content hidden">
-            <?php if (empty($pending_trainers)): ?>
-                <div class="bg-white rounded-2xl shadow-lg ring-1 ring-gray-200/50 p-12 text-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-16 h-16 text-gray-400 mx-auto mb-4">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
+                                                <div class="page-header">
+                                                    <h2 class="page-title">System Diagnostics</h2>
+                                                    <p class="page-subtitle">Diagnostic pages and logs for administrators.</p>
+                                                </div>
+
+                                                <div class="card">
+                                                    <h3 class="text-lg font-semibold">Diagnostics</h3>
+                                                    <div class="tools-list" style="margin-top:1rem;">
+                                                        <a class="tool-item" href="../setup_database.php">Database Setup Script</a>
+                                                        <a class="tool-item" href="../add_staff_role.sql">DB Role Migration Script</a>
+                                                        <a class="tool-item" href="../add_staff_table.sql">Create Staff Table Script</a>
+                                                        <a class="tool-item" href="../help.php">System Help</a>
+                                                    </div>
+                                                </div>
+
+                                                <?php include '../footer.php'; ?>
                     </svg>
                     <p class="text-gray-500 font-medium text-lg mb-2">No pending trainer approvals</p>
                     <p class="text-sm text-gray-400">All trainer registrations have been processed.</p>
