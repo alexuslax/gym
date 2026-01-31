@@ -269,8 +269,9 @@
 
   // Get pending members separately - query users table for pending approvals
   // These are users who registered but haven't been approved yet (no member_id assigned)
-  $pending_where_conditions = ["is_active = ?", "role = ?"];
-  $pending_params = [0, 'member'];
+  // Include legacy 'member' and new 'student' roles
+  $pending_where_conditions = ["is_active = ?", "role IN ('member','student')"];
+  $pending_params = [0];
   
   // Apply search filter to pending members if provided
   if (!empty($search)) {
@@ -307,10 +308,32 @@
         'contact_number' => $pending_data['contact_number'] ?? '',
         'address' => $pending_data['address'] ?? '',
         'date_of_birth' => $pending_data['date_of_birth'] ?? '',
-        'profile_picture' => $pending_data['profile_picture'] ?? null,
+          'profile_picture' => $pending_data['profile_picture'] ?? null,
         'registration_date' => $user['registration_date'],
         'membership_status' => 'Pending'
-      ];
+        ];
+        // Attach any uploaded documents for reviewer convenience
+        if (!empty($pending_data['cor_document'])) {
+          $pending_members[count($pending_members)-1]['cor_document'] = $pending_data['cor_document'];
+        }
+        if (!empty($pending_data['medical_certificate'])) {
+          $pending_members[count($pending_members)-1]['medical_certificate'] = $pending_data['medical_certificate'];
+        }
+        if (!empty($pending_data['id_card'])) {
+          $pending_members[count($pending_members)-1]['id_card'] = $pending_data['id_card'];
+        }
+        if (!empty($pending_data['rfid_number'])) {
+          $pending_members[count($pending_members)-1]['rfid_number'] = $pending_data['rfid_number'];
+        }
+        if (!empty($pending_data['student_number'])) {
+          $pending_members[count($pending_members)-1]['student_number'] = $pending_data['student_number'];
+        }
+        if (!empty($pending_data['faculty_number'])) {
+          $pending_members[count($pending_members)-1]['faculty_number'] = $pending_data['faculty_number'];
+        }
+        if (!empty($pending_data['staff_number'])) {
+          $pending_members[count($pending_members)-1]['staff_number'] = $pending_data['staff_number'];
+        }
     }
   }
 
@@ -651,6 +674,25 @@
                     <span class="font-medium"><?php echo formatDate($member['registration_date']); ?></span>
                   </div>
                 </div>
+
+                <?php if (!empty($member['cor_document']) || !empty($member['medical_certificate']) || !empty($member['id_card']) || !empty($member['rfid_number'])): ?>
+                  <div class="mb-4 text-xs text-gray-600">
+                    <div style="display:flex;flex-direction:column;gap:6px;">
+                      <?php if (!empty($member['cor_document'])): ?>
+                        <a href="<?php echo htmlspecialchars($member['cor_document']); ?>" target="_blank" class="text-blue-600">View Certificate of Registration</a>
+                      <?php endif; ?>
+                      <?php if (!empty($member['medical_certificate'])): ?>
+                        <a href="<?php echo htmlspecialchars($member['medical_certificate']); ?>" target="_blank" class="text-blue-600">View Medical Certificate</a>
+                      <?php endif; ?>
+                      <?php if (!empty($member['id_card'])): ?>
+                        <a href="<?php echo htmlspecialchars($member['id_card']); ?>" target="_blank" class="text-blue-600">View ID Card</a>
+                      <?php endif; ?>
+                      <?php if (!empty($member['rfid_number'])): ?>
+                        <div class="text-xs text-gray-500">RFID: <span class="font-medium"><?php echo htmlspecialchars($member['rfid_number']); ?></span></div>
+                      <?php endif; ?>
+                    </div>
+                  </div>
+                <?php endif; ?>
 
                 <div class="flex items-center gap-2 pt-4 border-t border-gray-200">
                   <form method="POST" style="flex: 1;" onsubmit="return confirm('Are you sure you want to approve this member?');">

@@ -9,7 +9,7 @@ $recent_activities = getRecentActivity();
   <?php $page_title = 'Dashboard - UEP Fitness Gym'; include '../header.php'; ?>
 
 <style>
-  .admin-dashboard {
+  .staff-dashboard {
     padding: 2rem 0;
   }
 
@@ -618,10 +618,10 @@ $recent_activities = getRecentActivity();
   }
 </style>
 
-<div class="admin-dashboard">
+<div class="staff-dashboard">
   <!-- Welcome Message -->
   <div class="page-header">
-    <h2 class="page-title">Welcome back, Admin!</h2>
+    <h2 class="page-title">Welcome back, Staff!</h2>
     <p class="page-subtitle">Here's a quick overview of your gym operations.</p>
   </div>
 

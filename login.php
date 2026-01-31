@@ -271,10 +271,80 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                             'registration_date' => date('Y-m-d')
                         ]);
                     }
-                    
+
+                    // For staff, handle staff-specific fields and document uploads
+                    if ($signup_type === 'staff') {
+                        $signup_rfid = isset($_POST['signup_rfid']) ? sanitizeInput($_POST['signup_rfid']) : null;
+                        $signup_staff_number = isset($_POST['signup_staff_number']) ? sanitizeInput($_POST['signup_staff_number']) : '';
+
+                        if (empty($signup_staff_number)) {
+                            throw new Exception('Please fill in all staff required fields.');
+                        }
+
+                        $cor_path_s = null;
+                        $medical_cert_path_s = null;
+                        $id_card_path_s = null;
+
+                        if (isset($_FILES['signup_cor']) && $_FILES['signup_cor']['error'] === UPLOAD_ERR_OK) {
+                            $ext = pathinfo($_FILES['signup_cor']['name'], PATHINFO_EXTENSION);
+                            $new_filename = uniqid('cor_') . '.' . $ext;
+                            $upload_dir = 'img/documents/';
+                            if (!is_dir($upload_dir)) mkdir($upload_dir, 0777, true);
+                            $upload_path = $upload_dir . $new_filename;
+                            if (move_uploaded_file($_FILES['signup_cor']['tmp_name'], $upload_path)) {
+                                $cor_path_s = $upload_path;
+                            }
+                        }
+
+                        if (isset($_FILES['signup_medical_cert']) && $_FILES['signup_medical_cert']['error'] === UPLOAD_ERR_OK) {
+                            $ext = pathinfo($_FILES['signup_medical_cert']['name'], PATHINFO_EXTENSION);
+                            $new_filename = uniqid('medical_') . '.' . $ext;
+                            $upload_dir = 'img/documents/';
+                            if (!is_dir($upload_dir)) mkdir($upload_dir, 0777, true);
+                            $upload_path = $upload_dir . $new_filename;
+                            if (move_uploaded_file($_FILES['signup_medical_cert']['tmp_name'], $upload_path)) {
+                                $medical_cert_path_s = $upload_path;
+                            }
+                        }
+
+                        if (isset($_FILES['signup_id_card']) && $_FILES['signup_id_card']['error'] === UPLOAD_ERR_OK) {
+                            $ext = pathinfo($_FILES['signup_id_card']['name'], PATHINFO_EXTENSION);
+                            $new_filename = uniqid('id_') . '.' . $ext;
+                            $upload_dir = 'img/documents/';
+                            if (!is_dir($upload_dir)) mkdir($upload_dir, 0777, true);
+                            $upload_path = $upload_dir . $new_filename;
+                            if (move_uploaded_file($_FILES['signup_id_card']['tmp_name'], $upload_path)) {
+                                $id_card_path_s = $upload_path;
+                            }
+                        }
+
+                        $pending_data = json_encode([
+                            'first_name' => $signup_first_name,
+                            'last_name' => $signup_last_name,
+                            'middle_name' => $signup_middle_name,
+                            'gender' => $signup_gender,
+                            'contact_number' => $signup_contact,
+                            'address' => $signup_address,
+                            'date_of_birth' => $signup_dob,
+                            'profile_picture' => $profile_picture,
+                            'staff_number' => $signup_staff_number,
+                            'rfid_number' => $signup_rfid,
+                            'cor_document' => $cor_path_s,
+                            'medical_certificate' => $medical_cert_path_s,
+                            'id_card' => $id_card_path_s,
+                            'registration_date' => date('Y-m-d')
+                        ]);
+                    }
+
                     // Insert into users table only - set is_active to 0 (pending approval)
-                    // Student/Faculty ID will be generated when admin approves
-                    $role = ($signup_type === 'faculty') ? 'faculty' : 'student';
+                    // Student/Faculty/Staff ID will be generated when staff approves
+                    if ($signup_type === 'faculty') {
+                        $role = 'faculty';
+                    } elseif ($signup_type === 'staff') {
+                        $role = 'staff';
+                    } else {
+                        $role = 'student';
+                    }
                     $stmt = $pdo->prepare("INSERT INTO users (user_id, username, password, email, full_name, role, is_active, pending_data) VALUES (?, ?, ?, ?, ?, ?, 0, ?)");
                     $stmt->execute([$user_id, $signup_username, $hashed_password, $signup_email, $full_name, $role, $pending_data]);
                     
