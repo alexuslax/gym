@@ -8,11 +8,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         switch ($_POST['action']) {
             case 'add_equipment':
                 $equipment_name = sanitizeInput($_POST['equipment_name']);
-                $category = sanitizeInput($_POST['category']);
+                $equipment_type = sanitizeInput($_POST['equipment_type']) ?: 'machine';
                 $quantity_to_add = (int)sanitizeInput($_POST['quantity_to_add']);
                 $purchase_date = sanitizeInput($_POST['purchase_date']);
                 $purchase_price = sanitizeInput($_POST['purchase_price']);
                 $notes = sanitizeInput($_POST['notes']) ?: '';
+                
+                // Set is_machine and is_weights based on equipment_type, and category name
+                $is_machine = ($equipment_type === 'machine') ? 1 : 0;
+                $is_weights = ($equipment_type === 'weights') ? 1 : 0;
+                $category = ($equipment_type === 'weights') ? 'Weights' : 'Machine';
+                $weight_kg = (isset($_POST['weight_kg']) && $_POST['weight_kg'] !== '') ? (float)sanitizeInput($_POST['weight_kg']) : NULL;
                 
                 // Check if this equipment type already exists (same name, category)
                 $check_stmt = $pdo->prepare("SELECT equipment_id, total_quantity, quantity_available FROM equipment WHERE equipment_name = ? AND category = ?");
@@ -39,13 +45,24 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     $update_stmt = $pdo->prepare("UPDATE equipment SET total_quantity = ?, quantity_available = ? WHERE equipment_id = ?");
                     $update_stmt->execute([$new_total, $new_available, $existing['equipment_id']]);
                     
+                    // Log to system_logs
+                    $log_stmt = $pdo->prepare("INSERT INTO system_logs (user_id, action, table_name, record_id, old_values, new_values, ip_address, user_agent) VALUES (?, 'UPDATE', 'equipment', ?, ?, ?, ?, ?)");
+                    $log_stmt->execute([
+                        $_SESSION['user_id'] ?? null,
+                        $existing['equipment_id'],
+                        json_encode(['total_quantity' => $existing['total_quantity']]),
+                        json_encode(['total_quantity' => $new_total]),
+                        $_SERVER['REMOTE_ADDR'],
+                        $_SERVER['HTTP_USER_AGENT']
+                    ]);
+                    
                     header('Location: equipment.php?success=Equipment quantity updated successfully');
                 } else {
                     // New equipment type - insert and create units
                     $status = 'Working'; // New equipment is always working
                     
-                    $insert_stmt = $pdo->prepare("INSERT INTO equipment (equipment_name, category, purchase_date, purchase_price, status, quantity_available, total_quantity, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-                    $insert_stmt->execute([$equipment_name, $category, $purchase_date, $purchase_price, $status, $quantity_to_add, $quantity_to_add, $notes]);
+                    $insert_stmt = $pdo->prepare("INSERT INTO equipment (equipment_name, category, purchase_date, purchase_price, status, quantity_available, total_quantity, notes, is_machine, is_weights, weight_kg) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    $insert_stmt->execute([$equipment_name, $category, $purchase_date, $purchase_price, $status, $quantity_to_add, $quantity_to_add, $notes, $is_machine, $is_weights, $weight_kg]);
                     
                     $equipment_id = $pdo->lastInsertId();
                     
@@ -62,6 +79,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         }
                     }
                     
+                    // Log to system_logs
+                    $log_stmt = $pdo->prepare("INSERT INTO system_logs (user_id, action, table_name, record_id, old_values, new_values, ip_address, user_agent) VALUES (?, 'INSERT', 'equipment', ?, ?, ?, ?, ?)");
+                    $log_stmt->execute([
+                        $_SESSION['user_id'] ?? null,
+                        $equipment_id,
+                        json_encode(null),
+                        json_encode(['equipment_name' => $equipment_name, 'total_quantity' => $quantity_to_add]),
+                        $_SERVER['REMOTE_ADDR'],
+                        $_SERVER['HTTP_USER_AGENT']
+                    ]);
+                    
                     header('Location: equipment.php?success=Equipment added successfully');
                 }
                 exit();
@@ -70,22 +98,112 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             case 'update_equipment':
                 $equipment_id = sanitizeInput($_POST['equipment_id']);
                 $equipment_name = sanitizeInput($_POST['equipment_name']);
-                $category = sanitizeInput($_POST['category']);
-                $purchase_date = sanitizeInput($_POST['purchase_date']);
-                $purchase_price = sanitizeInput($_POST['purchase_price']);
-                $notes = sanitizeInput($_POST['notes']) ?: '';
+                $total_quantity = isset($_POST['total_quantity']) ? (int)$_POST['total_quantity'] : null;
+                $category = sanitizeInput($_POST['category'] ?? '');
+                $purchase_date = sanitizeInput($_POST['purchase_date'] ?? '');
+                $purchase_price = sanitizeInput($_POST['purchase_price'] ?? '');
+                $notes = sanitizeInput($_POST['notes'] ?? '') ?: '';
                 
-                $stmt = $pdo->prepare("UPDATE equipment SET equipment_name=?, category=?, purchase_date=?, purchase_price=?, notes=? WHERE equipment_id=?");
-                $stmt->execute([$equipment_name, $category, $purchase_date, $purchase_price, $notes, $equipment_id]);
-                
-                header('Location: equipment.php?success=Equipment updated successfully');
+                try {
+                    // Get old values before update
+                    $old_stmt = $pdo->prepare("SELECT * FROM equipment WHERE equipment_id = ?");
+                    $old_stmt->execute([$equipment_id]);
+                    $old_record = $old_stmt->fetch();
+                    
+                    if ($total_quantity !== null) {
+                        $stmt = $pdo->prepare("UPDATE equipment SET equipment_name=?, total_quantity=? WHERE equipment_id=?");
+                        $stmt->execute([$equipment_name, $total_quantity, $equipment_id]);
+                    } else {
+                        $stmt = $pdo->prepare("UPDATE equipment SET equipment_name=?, category=?, purchase_date=?, purchase_price=?, notes=? WHERE equipment_id=?");
+                        $stmt->execute([$equipment_name, $category, $purchase_date, $purchase_price, $notes, $equipment_id]);
+                    }
+                    
+                    // Get new values after update
+                    $new_stmt = $pdo->prepare("SELECT * FROM equipment WHERE equipment_id = ?");
+                    $new_stmt->execute([$equipment_id]);
+                    $new_record = $new_stmt->fetch();
+                    
+                    // Log the update to system_logs
+                    $old_values = json_encode([
+                        'equipment_name' => $old_record['equipment_name'],
+                        'total_quantity' => $old_record['total_quantity'],
+                        'category' => $old_record['category'],
+                        'purchase_date' => $old_record['purchase_date'],
+                        'purchase_price' => $old_record['purchase_price'],
+                        'notes' => $old_record['notes']
+                    ]);
+                    
+                    $new_values = json_encode([
+                        'equipment_name' => $new_record['equipment_name'],
+                        'total_quantity' => $new_record['total_quantity'],
+                        'category' => $new_record['category'],
+                        'purchase_date' => $new_record['purchase_date'],
+                        'purchase_price' => $new_record['purchase_price'],
+                        'notes' => $new_record['notes']
+                    ]);
+                    
+                    $log_stmt = $pdo->prepare("INSERT INTO system_logs (user_id, action, table_name, record_id, old_values, new_values, ip_address, user_agent) VALUES (?, 'UPDATE', 'equipment', ?, ?, ?, ?, ?)");
+                    $log_stmt->execute([
+                        $_SESSION['user_id'] ?? null,
+                        $equipment_id,
+                        $old_values,
+                        $new_values,
+                        $_SERVER['REMOTE_ADDR'],
+                        $_SERVER['HTTP_USER_AGENT']
+                    ]);
+                    
+                    header('Location: equipment.php?success=Equipment updated successfully');
+                } catch (Exception $e) {
+                    error_log('Equipment update error: ' . $e->getMessage());
+                    header('Location: equipment.php?error=Failed to update equipment');
+                }
                 exit();
                 break;
                 
             case 'delete_equipment':
                 $equipment_id = sanitizeInput($_POST['equipment_id']);
-                $stmt = $pdo->prepare("DELETE FROM equipment WHERE equipment_id = ?");
-                $stmt->execute([$equipment_id]);
+                $quantity_to_remove = isset($_POST['quantity']) ? (int)sanitizeInput($_POST['quantity']) : 0;
+                
+                if ($quantity_to_remove > 0) {
+                    // Remove specific quantity of units
+                    $get_units = $pdo->prepare("SELECT unit_id FROM equipment_units WHERE equipment_id = ? AND status = 'Available' LIMIT ?");
+                    $get_units->execute([$equipment_id, $quantity_to_remove]);
+                    $units_to_delete = $get_units->fetchAll(PDO::FETCH_COLUMN);
+                    
+                    if (count($units_to_delete) > 0) {
+                        // Delete the units
+                        $placeholders = implode(',', array_fill(0, count($units_to_delete), '?'));
+                        $delete_units = $pdo->prepare("DELETE FROM equipment_units WHERE unit_id IN ($placeholders)");
+                        $delete_units->execute($units_to_delete);
+                        
+                        // Update equipment totals
+                        $count_stmt = $pdo->prepare("SELECT 
+                            COUNT(CASE WHEN status = 'Available' THEN 1 END) as available,
+                            COUNT(*) as total
+                            FROM equipment_units WHERE equipment_id = ?");
+                        $count_stmt->execute([$equipment_id]);
+                        $counts = $count_stmt->fetch();
+                        
+                        $update_equipment = $pdo->prepare("UPDATE equipment SET quantity_available = ?, total_quantity = ? WHERE equipment_id = ?");
+                        $update_equipment->execute([$counts['available'], $counts['total'], $equipment_id]);
+                        
+                        // If no units left, delete the equipment
+                        if ($counts['total'] == 0) {
+                            $delete_equipment = $pdo->prepare("DELETE FROM equipment WHERE equipment_id = ?");
+                            $delete_equipment->execute([$equipment_id]);
+                            header('Location: equipment.php?success=Equipment deleted successfully');
+                        } else {
+                            header('Location: equipment.php?success=' . count($units_to_delete) . ' unit(s) removed successfully');
+                        }
+                    } else {
+                        header('Location: equipment.php?error=Not enough available units to remove');
+                    }
+                } else {
+                    // Delete entire equipment
+                    $stmt = $pdo->prepare("DELETE FROM equipment WHERE equipment_id = ?");
+                    $stmt->execute([$equipment_id]);
+                    header('Location: equipment.php?success=Equipment deleted successfully');
+                }
                 
                 header('Location: equipment.php?success=Equipment deleted successfully');
                 exit();
@@ -369,8 +487,8 @@ while ($row = $category_totals_stmt->fetch()) {
 
     <!-- Page Header -->
     <div class="page-header">
-        <h2 class="page-title">Equipment Management</h2>
-        <p class="page-subtitle">Track gym equipment, maintenance records, and status.</p>
+        <h2 class="page-title">Equipment Inventory</h2>
+        <p class="page-subtitle">Add and remove equipment from inventory.</p>
     </div>
 
     <div style="margin-bottom: 2rem;">
@@ -382,257 +500,39 @@ while ($row = $category_totals_stmt->fetch()) {
         </button>
     </div>
 
-    <!-- Equipment Statistics -->
-    <div class="stats-grid" style="grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--spacing-6); margin-bottom: var(--spacing-8);">
-        <div class="card-stats card-stats-blue">
-            <div class="stats-decoration stats-decoration-blue" style="position: absolute;"></div>
-            <div style="position: relative;">
-                <div class="stats-icon-container stats-icon-container-blue">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" style="color: #ffffff; width: 1.5rem; height: 1.5rem;">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"/>
-                    </svg>
-                </div>
-                <h3 class="stats-label">Total Equipment</h3>
-                <p class="stats-value"><?php echo $stats['total_equipment']; ?></p>
-            </div>
-        </div>
-        <div class="card-stats card-stats-green">
-            <div class="stats-decoration stats-decoration-green" style="position: absolute;"></div>
-            <div style="position: relative;">
-                <div class="stats-icon-container stats-icon-container-green">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" style="color: #ffffff; width: 1.5rem; height: 1.5rem;">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"/>
-                    </svg>
-                </div>
-                <h3 class="stats-label">Working</h3>
-                <p class="stats-value"><?php echo $stats['working']; ?></p>
-            </div>
-        </div>
-        <div class="card-stats card-stats-yellow">
-            <div class="stats-decoration stats-decoration-amber" style="position: absolute;"></div>
-            <div style="position: relative;">
-                <div class="stats-icon-container stats-icon-container-amber">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" style="color: #ffffff; width: 1.5rem; height: 1.5rem;">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/>
-                    </svg>
-                </div>
-                <h3 class="stats-label">Under Maintenance</h3>
-                <p class="stats-value"><?php echo $stats['maintenance']; ?></p>
-            </div>
-        </div>
-        
-        <div class="card-stats card-stats-red">
-            <div class="stats-decoration stats-decoration-red" style="position: absolute;"></div>
-            <div style="position: relative;">
-                <div class="stats-icon-container stats-icon-container-red">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" style="color: #ffffff; width: 1.5rem; height: 1.5rem;">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/>
-                    </svg>
-                </div>
-                <h3 class="stats-label">Out of Order</h3>
-                <p class="stats-value"><?php echo $stats['repair']; ?></p>
-            </div>
-        </div>
-    </div>
-
-    <!-- Search and Filters -->
-    <div class="card" style="margin-bottom: var(--spacing-8);">
-        <h3 class="section-title" style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: var(--spacing-4);">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 1.25rem; height: 1.25rem; color: var(--blue-600);">
-                <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607z"/>
-            </svg>
-            Search & Filter Equipment
-        </h3>
-        <form method="GET" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--spacing-4); align-items: end;">
-            <div style="position: relative;">
-                <input type="text" name="search" placeholder="Search equipment" value="<?php echo htmlspecialchars($search); ?>" class="form-input" style="padding-left: 2.5rem;">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 1.25rem; height: 1.25rem; color: var(--gray-400); position: absolute; left: 0.75rem; top: 50%; transform: translateY(-50%); pointer-events: none;">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607z"/>
-                </svg>
-            </div>
-            <select name="status" class="form-select">
-                <option value="">All Status</option>
-                <option value="Working" <?php echo $status_filter == 'Working' ? 'selected' : ''; ?>>Working</option>
-                <option value="Under Maintenance" <?php echo $status_filter == 'Under Maintenance' ? 'selected' : ''; ?>>Under Maintenance</option>
-                <option value="Out of Order" <?php echo $status_filter == 'Out of Order' ? 'selected' : ''; ?>>Out of Order</option>
-            </select>
-            <select name="category" class="form-select">
-                <option value="">All Categories</option>
-                <option value="Cardio" <?php echo $category_filter == 'Cardio' ? 'selected' : ''; ?>>Cardio</option>
-                <option value="Strength" <?php echo $category_filter == 'Strength' ? 'selected' : ''; ?>>Strength</option>
-                <option value="Accessories" <?php echo $category_filter == 'Accessories' ? 'selected' : ''; ?>>Accessories</option>
-                <option value="Free Weights" <?php echo $category_filter == 'Free Weights' ? 'selected' : ''; ?>>Free Weights</option>
-            </select>
-            <button type="submit" class="btn btn-primary">
-                Search
-            </button>
-        </form>
-    </div>
-
-    <!-- Equipment Cards Grid -->
-    <div style="margin-bottom: 2rem;">
-        <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.5rem;">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 1.5rem; height: 1.5rem; color: var(--blue-600);">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h4.5v10.5h-4.5zM15.75 6.75h4.5v10.5h-4.5zM10.5 9.75h3v4.5h-3z"/>
-            </svg>
-            <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--slate-900); margin: 0;">Equipment Inventory</h3>
-        </div>
-        
+    <div class="card" style="padding: var(--spacing-4);">
         <?php if (empty($equipment)): ?>
-        <div class="card" style="padding: 3rem; text-align: center;">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 3rem; height: 3rem; margin: 0 auto 1rem; color: var(--gray-400);">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"/>
-            </svg>
-            <p style="color: var(--gray-600); font-size: 1rem; margin-bottom: 1rem;">No equipment found. Add your first equipment to get started.</p>
-            <button type="button" onclick="openAddModal()" class="btn btn-primary" style="display: inline-flex; align-items: center; gap: 0.5rem;">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 1.25rem; height: 1.25rem;">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
-                </svg>
-                Add Equipment
-            </button>
-        </div>
-        <?php else: ?>
-        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.5rem;">
-            <?php foreach ($equipment as $item): 
-                // Determine equipment status based on units
-                $units_total = $item['units_total'] ?? $item['total_quantity'];
-                $units_available = $item['units_available'] ?? $item['quantity_available'];
-                $units_maintenance = $item['units_maintenance'] ?? 0;
-                $units_broken = $item['units_broken'] ?? 0;
-                
-                if ($units_available == $units_total) {
-                    $computed_status = 'Available';
-                } elseif ($units_available == 0) {
-                    $computed_status = 'Out of Order';
-                } elseif ($units_maintenance == $units_total) {
-                    $computed_status = 'Under Maintenance';
-                } else {
-                    $computed_status = 'Mixed';
-                }
-                
-                // Determine category badge style
-                $category_styles = [
-                    'Cardio' => 'background-color: var(--blue-100); color: var(--blue-800); border: 1px solid var(--blue-200);',
-                    'Strength' => 'background-color: var(--purple-100); color: var(--purple-800); border: 1px solid var(--purple-200);',
-                    'Free Weights' => 'background-color: var(--orange-100); color: var(--orange-800); border: 1px solid var(--orange-200);',
-                    'Accessories' => 'background-color: var(--teal-100); color: var(--teal-800); border: 1px solid var(--teal-200);'
-                ];
-                $category_style = $category_styles[$item['category']] ?? 'background-color: var(--gray-100); color: var(--gray-800); border: 1px solid var(--gray-200);';
-                
-                // Determine status badge style
-                $status_styles = [
-                    'Available' => 'background-color: var(--green-100); color: var(--green-800); border: 1px solid var(--green-200);',
-                    'Mixed' => 'background-color: var(--blue-100); color: var(--blue-800); border: 1px solid var(--blue-200);',
-                    'Under Maintenance' => 'background-color: var(--yellow-100); color: var(--yellow-800); border: 1px solid var(--yellow-200);',
-                    'Out of Order' => 'background-color: var(--red-100); color: var(--red-800); border: 1px solid var(--red-200);'
-                ];
-                $status_style = $status_styles[$computed_status] ?? 'background-color: var(--gray-100); color: var(--gray-800); border: 1px solid var(--gray-200);';
-                
-                // Status icon
-                $status_icons = [
-                    'Available' => '<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/>',
-                    'Mixed' => '<path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/>',
-                    'Under Maintenance' => '<path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 004.486-6.336l-3.276 3.277a3.004 3.004 0 01-2.25-2.25l3.276-3.276a4.5 4.5 0 00-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437l1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008z"/>',
-                    'Out of Order' => '<path stroke-linecap="round" stroke-linejoin="round" d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/>'
-                ];
-                $status_icon = $status_icons[$computed_status] ?? $status_icons['Out of Order'];
-            ?>
-            <div class="card" style="padding: 0; overflow: hidden; transition: transform 0.2s, box-shadow 0.2s; cursor: pointer;" onmouseover="this.style.transform='translateY(-4px)'; this.style.boxShadow='0 12px 24px rgba(0,0,0,0.15)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 1px 3px rgba(0,0,0,0.1)'" onclick="openEquipmentHistory('<?php echo $item['equipment_id']; ?>', '<?php echo htmlspecialchars($item['equipment_name']); ?>')">
-                <!-- Card Header -->
-                <div style="background: linear-gradient(135deg, var(--blue-600) 0%, var(--purple-600) 100%); padding: 1.25rem; color: white;">
-                    <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.75rem;">
-                        <h4 style="font-size: 1.125rem; font-weight: 700; margin: 0; color: white;"><?php echo htmlspecialchars($item['equipment_name']); ?></h4>
-                        <span style="display: inline-flex; align-items: center; padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; background-color: rgba(255,255,255,0.25); color: white; backdrop-filter: blur(10px);">
-                            <?php echo htmlspecialchars($item['category']); ?>
-                        </span>
-                    </div>
-                    <?php if (!empty($item['brand']) || !empty($item['model'])): ?>
-                    <div style="font-size: 0.875rem; color: rgba(255,255,255,0.9); display: flex; align-items: center; gap: 0.5rem;">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 1rem; height: 1rem;">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z"/>
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 6h.008v.008H6V6z"/>
-                        </svg>
-                        <?php echo htmlspecialchars(trim($item['brand'] . ' ' . $item['model'])); ?>
-                    </div>
-                    <?php endif; ?>
-                </div>
-                
-                <!-- Card Body -->
-                <div style="padding: 1.25rem;">
-                    <!-- Availability -->
-                    <div style="margin-bottom: 1rem; padding: 1rem; background-color: var(--gray-50); border-radius: 0.5rem; border: 1px solid var(--gray-200);">
-                        <div style="font-size: 0.75rem; font-weight: 600; color: var(--gray-600); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.75rem;">Unit Status</div>
-                        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.75rem;">
-                            <div style="text-align: center; padding: 0.75rem; background-color: white; border-radius: 0.375rem; border: 1px solid var(--gray-200);">
-                                <div style="font-size: 1.75rem; font-weight: 700; color: var(--slate-900);"><?php echo $item['units_total'] ?? $item['total_quantity']; ?></div>
-                                <div style="font-size: 0.7rem; color: var(--gray-500); margin-top: 0.25rem;">TOTAL</div>
-                            </div>
-                            <div style="text-align: center; padding: 0.75rem; background-color: var(--green-50); border-radius: 0.375rem; border: 1px solid var(--green-200);">
-                                <div style="font-size: 1.75rem; font-weight: 700; color: var(--green-700);"><?php echo $item['units_available'] ?? $item['quantity_available']; ?></div>
-                                <div style="font-size: 0.7rem; color: var(--green-600); margin-top: 0.25rem;">AVAILABLE</div>
-                            </div>
-                            <div style="text-align: center; padding: 0.75rem; background-color: var(--yellow-50); border-radius: 0.375rem; border: 1px solid var(--yellow-200);">
-                                <div style="font-size: 1.75rem; font-weight: 700; color: var(--yellow-700);"><?php echo $item['units_maintenance'] ?? 0; ?></div>
-                                <div style="font-size: 0.7rem; color: var(--yellow-600); margin-top: 0.25rem;">MAINTENANCE</div>
-                            </div>
-                            <div style="text-align: center; padding: 0.75rem; background-color: var(--red-50); border-radius: 0.375rem; border: 1px solid var(--red-200);">
-                                <div style="font-size: 1.75rem; font-weight: 700; color: var(--red-700);"><?php echo $item['units_broken'] ?? 0; ?></div>
-                                <div style="font-size: 0.7rem; color: var(--red-600); margin-top: 0.25rem;">OUT OF ORDER</div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Optional Details -->
-                    <div style="border-top: 1px solid var(--gray-200); padding-top: 1rem; margin-top: 1rem;">
-                        <?php if (!empty($item['purchase_price']) && $item['purchase_price'] > 0): ?>
-                        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.625rem;">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 1rem; height: 1rem; color: var(--gray-400);">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 00-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 01-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 003 15h-.75M15 10.5a3 3 0 11-6 0 3 3 0 016 0zm3 0h.008v.008H18V10.5zm-12 0h.008v.008H6V10.5z"/>
-                            </svg>
-                            <span style="font-size: 0.8125rem; color: var(--gray-600);">Purchase: ₱<?php echo number_format($item['purchase_price'], 2); ?>/unit</span>
-                        </div>
-                        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.625rem;">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 1rem; height: 1rem; color: var(--gray-400);">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                            </svg>
-                            <span style="font-size: 0.8125rem; color: var(--gray-600); font-weight: 600;">Total Value: ₱<?php echo number_format($item['purchase_price'] * $item['total_quantity'], 2); ?></span>
-                        </div>
-                        <?php endif; ?>
-                        
-                        <?php if (empty($item['purchase_price'])): ?>
-                        <div style="text-align: center; padding: 0.5rem; color: var(--gray-400); font-size: 0.8125rem;">
-                            No additional details
-                        </div>
-                        <?php endif; ?>
-                    </div>
-                </div>
-                
-                <!-- Card Footer - Action Buttons -->
-                <div style="padding: 1rem 1.25rem; background-color: var(--gray-50); border-top: 1px solid var(--gray-200); display: flex; gap: 0.5rem;" onclick="event.stopPropagation()">
-                    <button onclick="openMaintenanceModal('<?php echo $item['equipment_id']; ?>', '<?php echo htmlspecialchars($item['equipment_name']); ?>', '<?php echo htmlspecialchars($item['category']); ?>', '<?php echo htmlspecialchars($item['status']); ?>'); event.stopPropagation();" class="btn btn-sm btn-primary" style="flex: 1; padding: 0.625rem 1rem; font-size: 0.8125rem; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 1rem; height: 1rem;">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 004.486-6.336l-3.276 3.277a3.004 3.004 0 01-2.25-2.25l3.276-3.276a4.5 4.5 0 00-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437l1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008z"/>
-                        </svg>
-                        Add Maintenance
-                    </button>
-                    <button onclick="openMarkBrokenModal('<?php echo $item['equipment_id']; ?>', '<?php echo htmlspecialchars($item['equipment_name']); ?>'); event.stopPropagation();" class="btn btn-sm btn-danger" style="flex: 1; padding: 0.625rem 1rem; font-size: 0.8125rem; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; background-color: #dc2626; border-color: #dc2626; color: white;">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 1rem; height: 1rem;">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/>
-                        </svg>
-                        Mark Broken
-                    </button>
-                    <?php if (($item['units_maintenance'] ?? 0) > 0): ?>
-                    <button onclick="openCompleteMaintenanceModal('<?php echo $item['equipment_id']; ?>', '<?php echo htmlspecialchars($item['equipment_name']); ?>'); event.stopPropagation();" class="btn btn-sm btn-success" style="flex: 1; padding: 0.625rem 1rem; font-size: 0.8125rem; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; background-color: #16a34a; border-color: #16a34a; color: white;">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 1rem; height: 1rem;">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/>
-                        </svg>
-                        Complete
-                    </button>
-                    <?php endif; ?>
-                </div>
+            <div style="text-align:center; padding: 2rem; color: var(--gray-600);">
+                No equipment found. Add your first equipment to get started.
             </div>
-            <?php endforeach; ?>
-        </div>
+        <?php else: ?>
+            <div style="overflow-x:auto;">
+                <table style="width:100%; border-collapse: collapse; font-size: 0.95rem;">
+                    <thead>
+                        <tr style="text-align:left; background:#f8fafc; border-bottom:1px solid #e5e7eb;">
+                            <th style="padding:0.75rem;">Equipment</th>
+                            <th style="padding:0.75rem;">Type</th>
+                            <th style="padding:0.75rem;">Weight</th>
+                            <th style="padding:0.75rem;">Total Units</th>
+                            <th style="padding:0.75rem;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($equipment as $item): ?>
+                        <tr style="border-bottom:1px solid #e5e7eb;">
+                            <td style="padding:0.75rem;"><?php echo htmlspecialchars($item['equipment_name']); ?></td>
+                            <td style="padding:0.75rem;"><?php echo ($item['is_weights'] ? 'Weights' : ($item['is_machine'] ? 'Machine' : 'N/A')); ?></td>
+                            <td style="padding:0.75rem;"><?php echo ($item['weight_kg'] ? htmlspecialchars($item['weight_kg']) . ' kg' : '-'); ?></td>
+                            <td style="padding:0.75rem;"><?php echo htmlspecialchars($item['total_quantity']); ?></td>
+                            <td style="padding:0.75rem; display: flex; gap: 0.5rem;">
+                                <button type="button" onclick="openEquipmentHistory(<?php echo $item['equipment_id']; ?>, '<?php echo htmlspecialchars($item['equipment_name']); ?>')" class="btn btn-sm" style="background:#10b981;color:#fff; padding: 0.375rem 0.75rem; font-size: 0.813rem; border-radius: 0.375rem;">View</button>
+                                <button type="button" onclick="openEditEquipment(<?php echo $item['equipment_id']; ?>, '<?php echo htmlspecialchars($item['equipment_name']); ?>', '<?php echo $item['total_quantity']; ?>')" class="btn btn-sm" style="background:#3b82f6;color:#fff; padding: 0.375rem 0.75rem; font-size: 0.813rem; border-radius: 0.375rem;">Edit</button>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
         <?php endif; ?>
     </div>
 
@@ -829,9 +729,75 @@ while ($row = $category_totals_stmt->fetch()) {
         </div>
     </div>
 
+    <!-- Edit Equipment Modal -->
+    <div id="editEquipmentModal" class="modal-overlay" style="display: none;">
+        <div class="modal-content" style="max-width: 32rem;" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h3 class="card-header-title">Edit Equipment</h3>
+                <button type="button" onclick="closeEditModal()" class="modal-close-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 1.5rem; height: 1.5rem;">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <form method="POST" style="padding: 1.5rem;">
+                <input type="hidden" name="action" value="update_equipment">
+                <input type="hidden" name="equipment_id" id="editEquipmentId">
+                
+                <div style="margin-bottom: 1.25rem;">
+                    <label style="display: block; font-weight: 600; color: var(--slate-700); margin-bottom: 0.5rem;">Equipment Name</label>
+                    <input type="text" name="equipment_name" id="editEquipmentName" required class="form-input">
+                </div>
+
+                <div style="margin-bottom: 1.5rem;">
+                    <label style="display: block; font-weight: 600; color: var(--slate-700); margin-bottom: 0.5rem;">Total Units</label>
+                    <input type="number" name="total_quantity" id="editTotalUnits" min="1" required class="form-input">
+                </div>
+                
+                <button type="submit" class="btn btn-primary" style="width: 100%; padding: 0.75rem;">Update Equipment</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Remove Equipment Modal -->
+    <div id="removeEquipmentModal" class="modal-overlay" style="display: none;">
+        <div class="modal-content" style="max-width: 32rem;" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h3 class="card-header-title">Remove Equipment</h3>
+                <button type="button" onclick="closeRemoveModal()" class="modal-close-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 1.5rem; height: 1.5rem;">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <form method="POST" style="padding: 1.5rem;">
+                <input type="hidden" name="action" value="delete_equipment">
+                <input type="hidden" name="equipment_id" id="removeEquipmentId">
+                
+                <div style="margin-bottom: 1.25rem;">
+                    <label style="display: block; font-weight: 600; color: var(--slate-700); margin-bottom: 0.5rem;">Equipment</label>
+                    <input type="text" id="removeEquipmentName" readonly class="form-input" style="background-color: var(--gray-100); cursor: not-allowed;">
+                </div>
+
+                <div style="margin-bottom: 1.5rem; padding: 1rem; background-color: var(--blue-50); border-left: 4px solid var(--blue-500); border-radius: 0.5rem;">
+                    <p style="margin: 0; font-size: 0.875rem; color: var(--slate-700);">
+                        <strong>Total units available:</strong> <span id="removeTotalUnits">0</span>
+                    </p>
+                </div>
+
+                <div style="margin-bottom: 1.5rem;">
+                    <label style="display: block; font-weight: 600; color: var(--slate-700); margin-bottom: 0.5rem;">How many units to remove?</label>
+                    <input type="number" name="quantity" id="removeQuantity" min="1" required class="form-input" placeholder="Enter quantity">
+                </div>
+                
+                <button type="submit" class="btn btn-danger" style="width: 100%; padding: 0.75rem; background: #dc2626;">Remove Units</button>
+            </form>
+        </div>
+    </div>
+
     <!-- Maintenance Modal -->
     <div id="equipmentModal" class="modal-overlay" style="display: none;">
-        <div class="modal-content" style="max-width: 42rem;" onclick="event.stopPropagation()">
+        <div class="modal-content" style="max-width: 36rem;" onclick="event.stopPropagation()">
             <div class="modal-header">
                 <h3 class="card-header-title" id="modalTitle">Add Equipment</h3>
                 <button type="button" id="closeEquipmentBtn" class="modal-close-btn">
@@ -840,118 +806,105 @@ while ($row = $category_totals_stmt->fetch()) {
                     </svg>
                 </button>
             </div>
-            <form method="POST" class="modal-form-spacing">
+            <form method="POST" style="padding: 1.5rem;">
                 <input type="hidden" name="action" id="formAction" value="add_equipment">
                 <input type="hidden" name="equipment_id" id="editEquipmentId">
+                <input type="hidden" name="purchase_date" value="">
+                <input type="hidden" name="purchase_price" value="">
+                <input type="hidden" name="notes" value="">
                 
-                <!-- Basic Information Section -->
-                <div style="margin-bottom: 2rem;">
-                    <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem; padding-bottom: 0.75rem; border-bottom: 3px solid var(--blue-500);">
-                        <div style="width: 2.5rem; height: 2.5rem; border-radius: 0.75rem; background: linear-gradient(135deg, var(--blue-500), var(--purple-600)); display: flex; align-items: center; justify-content: center;">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" style="width: 1.5rem; height: 1.5rem;">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h4.5v10.5h-4.5zM15.75 6.75h4.5v10.5h-4.5zM10.5 9.75h3v4.5h-3z"/>
-                            </svg>
-                        </div>
-                        <h4 style="font-size: 1.125rem; font-weight: 700; color: var(--slate-900); margin: 0;">Basic Information</h4>
-                    </div>
-                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.25rem;">
-                        <div class="form-group">
-                            <label class="form-label" style="font-weight: 600; color: var(--slate-700); margin-bottom: 0.5rem; display: block;">
-                                <span style="color: var(--red-500);">*</span> Equipment Name
-                            </label>
-                            <input type="text" name="equipment_name" id="equipment_name" required class="form-input" placeholder="e.g., Treadmill Model X-5000" style="border: 2px solid var(--gray-300); border-radius: 0.5rem; transition: all 0.2s;" onfocus="this.style.borderColor='var(--blue-500)'; this.style.boxShadow='0 0 0 3px rgba(59, 130, 246, 0.1)'" onblur="this.style.borderColor='var(--gray-300)'; this.style.boxShadow='none'">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" style="font-weight: 600; color: var(--slate-700); margin-bottom: 0.5rem; display: block;">
-                                <span style="color: var(--red-500);">*</span> Category
-                            </label>
-                            <select name="category" id="category" required class="form-select" style="border: 2px solid var(--gray-300); border-radius: 0.5rem; transition: all 0.2s;" onfocus="this.style.borderColor='var(--blue-500)'; this.style.boxShadow='0 0 0 3px rgba(59, 130, 246, 0.1)'" onblur="this.style.borderColor='var(--gray-300)'; this.style.boxShadow='none'">
-                                <option value="">Select Category</option>
-                                <option value="Cardio">🏃 Cardio</option>
-                                <option value="Strength">💪 Strength</option>
-                                <option value="Accessories">🎯 Accessories</option>
-                                <option value="Free Weights">🏋️ Free Weights</option>
-                            </select>
-                        </div>
+                <div style="margin-bottom: 1.25rem;">
+                    <label style="display: block; font-weight: 600; color: var(--slate-700); margin-bottom: 0.5rem;">Equipment Name</label>
+                    <input type="text" name="equipment_name" id="equipment_name" required class="form-input" placeholder="e.g., Treadmill">
+                </div>
+
+                <div style="margin-bottom: 1.5rem;">
+                    <label style="display: block; font-weight: 600; color: var(--slate-700); margin-bottom: 0.5rem;">Type</label>
+                    <select name="equipment_type" id="equipment_type" class="form-select" onchange="updateEquipmentType()">
+                        <option value="machine">Machine</option>
+                        <option value="weights">Weights</option>
+                    </select>
+                </div>
+                <input type="hidden" name="category" value="">
+
+                <div id="weightsFields" style="display: none; margin-bottom: 1.5rem; padding: 1rem; background-color: var(--gray-50); border-radius: 0.5rem;">
+                    <div style="margin-bottom: 1rem;">
+                        <label style="display: block; font-weight: 600; color: var(--slate-700); margin-bottom: 0.5rem;">Weight (kg)</label>
+                        <input type="number" name="weight_kg" id="weight_kg" step="0.5" min="0" class="form-input" placeholder="e.g., 20">
                     </div>
                 </div>
 
-                <!-- Quantity Section -->
-                <div style="margin-bottom: 2rem;">
-                    <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem; padding-bottom: 0.75rem; border-bottom: 3px solid var(--purple-500);">
-                        <div style="width: 2.5rem; height: 2.5rem; border-radius: 0.75rem; background: linear-gradient(135deg, var(--purple-500), var(--pink-600)); display: flex; align-items: center; justify-content: center;">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" style="width: 1.5rem; height: 1.5rem;">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"/>
-                            </svg>
-                        </div>
-                        <h4 style="font-size: 1.125rem; font-weight: 700; color: var(--slate-900); margin: 0;">Quantity</h4>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label" style="font-weight: 600; color: var(--slate-700); margin-bottom: 0.5rem; display: block;">
-                            <span style="color: var(--red-500);">*</span> Quantity to Add
-                        </label>
-                        <input type="number" name="quantity_to_add" id="quantity_to_add" min="1" required class="form-input" placeholder="Enter number of units" style="border: 2px solid var(--gray-300); border-radius: 0.5rem; transition: all 0.2s;" onfocus="this.style.borderColor='var(--purple-500)'; this.style.boxShadow='0 0 0 3px rgba(168, 85, 247, 0.1)'" onblur="this.style.borderColor='var(--gray-300)'; this.style.boxShadow='none'">
-                        <p style="font-size: 0.813rem; color: var(--slate-600); margin-top: 0.5rem; padding: 0.75rem; background-color: var(--blue-50); border-left: 3px solid var(--blue-500); border-radius: 0.375rem;">
-                            💡 If this equipment already exists, the quantity will be added to existing stock.
-                        </p>
-                    </div>
-                </div>
-
-                <!-- Purchase Details Section -->
-                <div style="margin-bottom: 2rem;">
-                    <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem; padding-bottom: 0.75rem; border-bottom: 3px solid var(--green-500);">
-                        <div style="width: 2.5rem; height: 2.5rem; border-radius: 0.75rem; background: linear-gradient(135deg, var(--green-500), var(--teal-600)); display: flex; align-items: center; justify-content: center;">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" style="width: 1.5rem; height: 1.5rem;">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 00-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 01-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 003 15h-.75M15 10.5a3 3 0 11-6 0 3 3 0 016 0zm3 0h.008v.008H18V10.5zm-12 0h.008v.008H6V10.5z"/>
-                            </svg>
-                        </div>
-                        <h4 style="font-size: 1.125rem; font-weight: 700; color: var(--slate-900); margin: 0;">Purchase Details <span style="font-size: 0.875rem; font-weight: 400; color: var(--slate-500);">(Optional)</span></h4>
-                    </div>
-                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.25rem;">
-                        <div class="form-group">
-                            <label class="form-label" style="font-weight: 600; color: var(--slate-700); margin-bottom: 0.5rem; display: block;">
-                                📅 Purchase Date
-                            </label>
-                            <input type="date" name="purchase_date" id="purchase_date" class="form-input" style="border: 2px solid var(--gray-300); border-radius: 0.5rem; transition: all 0.2s;" onfocus="this.style.borderColor='var(--green-500)'; this.style.boxShadow='0 0 0 3px rgba(34, 197, 94, 0.1)'" onblur="this.style.borderColor='var(--gray-300)'; this.style.boxShadow='none'">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" style="font-weight: 600; color: var(--slate-700); margin-bottom: 0.5rem; display: block;">
-                                💰 Purchase Price
-                            </label>
-                            <input type="number" name="purchase_price" id="purchase_price" step="0.01" min="0" class="form-input" placeholder="₱ 0.00" style="border: 2px solid var(--gray-300); border-radius: 0.5rem; transition: all 0.2s;" onfocus="this.style.borderColor='var(--green-500)'; this.style.boxShadow='0 0 0 3px rgba(34, 197, 94, 0.1)'" onblur="this.style.borderColor='var(--gray-300)'; this.style.boxShadow='none'">
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Additional Section -->
-                <div style="margin-bottom: 2rem;">
-                    <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem; padding-bottom: 0.75rem; border-bottom: 3px solid var(--amber-500);">
-                        <div style="width: 2.5rem; height: 2.5rem; border-radius: 0.75rem; background: linear-gradient(135deg, var(--amber-500), var(--orange-600)); display: flex; align-items: center; justify-content: center;">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" style="width: 1.5rem; height: 1.5rem;">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"/>
-                            </svg>
-                        </div>
-                        <h4 style="font-size: 1.125rem; font-weight: 700; color: var(--slate-900); margin: 0;">Additional Notes</h4>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label" style="font-weight: 600; color: var(--slate-700); margin-bottom: 0.5rem; display: block;">
-                            Notes
-                        </label>
-                        <textarea name="notes" id="notes" rows="4" class="form-textarea" placeholder="Add any additional information about this equipment..." style="border: 2px solid var(--gray-300); border-radius: 0.5rem; transition: all 0.2s; resize: vertical;" onfocus="this.style.borderColor='var(--amber-500)'; this.style.boxShadow='0 0 0 3px rgba(245, 158, 11, 0.1)'" onblur="this.style.borderColor='var(--gray-300)'; this.style.boxShadow='none'"></textarea>
-                    </div>
+                <div style="margin-bottom: 1.5rem;">
+                    <label style="display: block; font-weight: 600; color: var(--slate-700); margin-bottom: 0.5rem;">Quantity</label>
+                    <input type="number" name="quantity_to_add" id="quantity_to_add" min="1" required class="form-input" placeholder="Number of units">
                 </div>
                 
-                <div class="modal-footer" style="border-top: 2px solid var(--gray-200); padding-top: 1.5rem; margin-top: 2rem;">
-                    <button type="submit" class="btn btn-primary" style="background: linear-gradient(135deg, var(--blue-600), var(--purple-600)); border: none; padding: 0.875rem 2rem; font-size: 1rem; font-weight: 600; border-radius: 0.5rem; box-shadow: 0 4px 6px rgba(59, 130, 246, 0.3); transition: all 0.3s;" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 12px rgba(59, 130, 246, 0.4)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 6px rgba(59, 130, 246, 0.3)'">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 1.25rem; height: 1.25rem; display: inline-block; vertical-align: middle; margin-right: 0.5rem;">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/>
-                        </svg>
-                        Save Equipment
-                    </button>
-                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%; padding: 0.75rem;">Add Equipment</button>
             </form>
         </div>
     </div>
+
+    <script>
+    function updateEquipmentType() {
+        const equipmentType = document.getElementById('equipment_type').value;
+        const weightsFields = document.getElementById('weightsFields');
+        if (equipmentType === 'weights') {
+            weightsFields.style.display = 'block';
+        } else {
+            weightsFields.style.display = 'none';
+        }
+    }
+
+    function openEditEquipment(equipmentId, equipmentName, totalUnits) {
+        document.getElementById('editEquipmentId').value = equipmentId;
+        document.getElementById('editEquipmentName').value = equipmentName;
+        document.getElementById('editTotalUnits').value = totalUnits;
+        document.getElementById('editEquipmentModal').classList.add('show');
+    }
+
+    function closeEditModal() {
+        document.getElementById('editEquipmentModal').classList.remove('show');
+    }
+
+    function openRemoveDialog(equipmentId, equipmentName, totalUnits) {
+        document.getElementById('removeEquipmentId').value = equipmentId;
+        document.getElementById('removeEquipmentName').value = equipmentName;
+        document.getElementById('removeTotalUnits').textContent = totalUnits;
+        document.getElementById('removeQuantity').setAttribute('max', totalUnits);
+        document.getElementById('removeQuantity').value = '';
+        document.getElementById('removeEquipmentModal').classList.add('show');
+    }
+
+    function closeRemoveModal() {
+        document.getElementById('removeEquipmentModal').classList.remove('show');
+    }
+
+    // Close modals when clicking outside
+    document.addEventListener('DOMContentLoaded', function() {
+        const editModal = document.getElementById('editEquipmentModal');
+        const removeModal = document.getElementById('removeEquipmentModal');
+        
+        if (editModal) {
+            editModal.addEventListener('click', function(e) {
+                if (e.target === editModal) closeEditModal();
+            });
+        }
+        
+        if (removeModal) {
+            removeModal.addEventListener('click', function(e) {
+                if (e.target === removeModal) closeRemoveModal();
+            });
+        }
+
+        // Close on Escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                if (editModal && editModal.classList.contains('show')) closeEditModal();
+                if (removeModal && removeModal.classList.contains('show')) closeRemoveModal();
+            }
+        });
+    });
+    </script>
 
     <!-- Maintenance Modal -->
     <div id="maintenanceModal" class="modal-overlay" style="display: none;">
@@ -1480,13 +1433,13 @@ while ($row = $category_totals_stmt->fetch()) {
             modal.classList.add('show');
             
             try {
-                const response = await fetch(`get_equipment_history.php?equipment_id=${equipmentId}`);
+                const response = await fetch(`get_equipment_edit_history.php?equipment_id=${equipmentId}`);
                 if (!response.ok) throw new Error('Failed to fetch history');
                 
                 const history = await response.json();
                 
                 if (history.length === 0) {
-                    contentDiv.innerHTML = '<p style="text-align: center; padding: 2rem; color: var(--gray-500);">No maintenance history found.</p>';
+                    contentDiv.innerHTML = '<p style="text-align: center; padding: 2rem; color: var(--gray-500);">No edit history found.</p>';
                     return;
                 }
                 
@@ -1497,41 +1450,44 @@ while ($row = $category_totals_stmt->fetch()) {
                             <thead>
                                 <tr style="background-color: var(--gray-50); border-bottom: 2px solid var(--gray-200);">
                                     <th style="padding: 0.75rem; text-align: left; font-weight: 600; color: var(--slate-700);">Date</th>
-                                    <th style="padding: 0.75rem; text-align: left; font-weight: 600; color: var(--slate-700);">Type</th>
-                                    <th style="padding: 0.75rem; text-align: left; font-weight: 600; color: var(--slate-700);">Units</th>
-                                    <th style="padding: 0.75rem; text-align: left; font-weight: 600; color: var(--slate-700);">Status</th>
-                                    <th style="padding: 0.75rem; text-align: left; font-weight: 600; color: var(--slate-700);">Cost</th>
-                                    <th style="padding: 0.75rem; text-align: left; font-weight: 600; color: var(--slate-700);">Performed By</th>
+                                    <th style="padding: 0.75rem; text-align: left; font-weight: 600; color: var(--slate-700);">Changes</th>
+                                    <th style="padding: 0.75rem; text-align: left; font-weight: 600; color: var(--slate-700);">Modified By</th>
                                 </tr>
                             </thead>
                             <tbody>
                 `;
                 
                 history.forEach((record, index) => {
-                    const statusColor = record.status === 'Completed' ? 'var(--green-600)' : 
-                                       record.status === 'In Progress' ? 'var(--yellow-600)' : 
-                                       record.status === 'Scheduled' ? 'var(--blue-600)' : 'var(--gray-600)';
                     const bgColor = index % 2 === 0 ? 'white' : 'var(--gray-50)';
+                    const dateObj = new Date(record.created_at);
+                    const formattedDate = dateObj.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                    
+                    // Build changes description
+                    let changesText = '';
+                    const changes = [];
+                    
+                    if (record.name_changed) {
+                        changes.push(`Name: "${record.old_name}" → "${record.new_name}"`);
+                    }
+                    
+                    if (record.change_type) {
+                        if (record.change_type === 'Added') {
+                            changes.push(`Quantity: +${record.quantity_change}`);
+                        } else if (record.change_type === 'Reduced') {
+                            changes.push(`Quantity: -${record.quantity_change}`);
+                        } else if (record.change_type === 'Initial Add') {
+                            changes.push(`Initial quantity: ${record.quantity_change}`);
+                        }
+                    }
+                    
+                    changesText = changes.length > 0 ? changes.join(', ') : 'No changes logged';
                     
                     html += `
                         <tr style="background-color: ${bgColor}; border-bottom: 1px solid var(--gray-200);">
-                            <td style="padding: 0.75rem; color: var(--slate-600);">${record.maintenance_date}</td>
-                            <td style="padding: 0.75rem; color: var(--slate-900); font-weight: 500;">${record.maintenance_type}</td>
-                            <td style="padding: 0.75rem; color: var(--slate-600);">${record.units}</td>
-                            <td style="padding: 0.75rem;">
-                                <span style="color: ${statusColor}; font-weight: 600;">${record.status}</span>
-                                ${record.completion_date ? `<div style="font-size: 0.75rem; color: var(--gray-500);">Completed: ${record.completion_date}</div>` : ''}
-                            </td>
-                            <td style="padding: 0.75rem; color: var(--slate-600);">₱${parseFloat(record.cost || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
-                            <td style="padding: 0.75rem; color: var(--slate-600);">${record.performed_by || '-'}</td>
+                            <td style="padding: 0.75rem; color: var(--slate-600);">${formattedDate}</td>
+                            <td style="padding: 0.75rem; color: var(--slate-900);">${changesText}</td>
+                            <td style="padding: 0.75rem; color: var(--slate-600);">${record.full_name || record.username}</td>
                         </tr>
-                        ${record.description ? `
-                        <tr style="background-color: ${bgColor};">
-                            <td colspan="6" style="padding: 0 0.75rem 0.75rem 0.75rem; color: var(--gray-600); font-size: 0.813rem;">
-                                <strong>Description:</strong> ${record.description}
-                            </td>
-                        </tr>
-                        ` : ''}
                     `;
                 });
                 
@@ -1540,6 +1496,7 @@ while ($row = $category_totals_stmt->fetch()) {
                         </table>
                     </div>
                 `;
+                
                 
                 contentDiv.innerHTML = html;
             } catch (error) {

@@ -6,10 +6,13 @@ if (session_status() === PHP_SESSION_NONE) {
 // Prevent warnings for undefined 'role'
 $role = $_SESSION['role'] ?? null;
 
-// Detect if we're in a subdirectory (staff_view, student_view, faculty_view) or root
+// Detect if we're in a subdirectory (staff_view, student_view, faculty_view, member_view, trainer_view) or root
 $script_path = $_SERVER['SCRIPT_NAME'] ?? '';
 $is_subdirectory = (strpos($script_path, '/staff_view/') !== false || 
-                   strpos($script_path, '/student_view/') !== false || 
+                   strpos($script_path, '/member_view/') !== false || 
+                   strpos($script_path, '/admin_view/') !== false ||
+                   strpos($script_path, '/trainer_view/') !== false ||
+                   strpos($script_path, '/student_view/') !== false ||
                    strpos($script_path, '/faculty_view/') !== false);
 
 // Set path prefixes based on context
@@ -91,14 +94,16 @@ if (isset($_SESSION['user_id'])) {
 $view_dir = '';
 if (!$is_subdirectory && $role) {
     switch ($role) {
+        case 'admin':
+            $view_dir = 'admin_view/';
+            break;
         case 'staff':
             $view_dir = 'staff_view/';
             break;
         case 'student':
-            $view_dir = 'student_view/';
-            break;
         case 'faculty':
-            $view_dir = 'faculty_view/';
+            // Both student and faculty use member_view
+            $view_dir = 'member_view/';
             break;
     }
 }
@@ -106,16 +111,13 @@ if (!$is_subdirectory && $role) {
 // Staff should always navigate to staff_view, even when viewing trainer_view pages
 if ($is_subdirectory) {
     if (in_array($role, ['staff','admin'], true) && strpos($script_path, '/faculty_view/') !== false) {
-        // Staff viewing faculty_view pages - navigate to staff_view
-        $nav_prefix = '../staff_view/';
+        // Staff or admin viewing faculty_view pages - navigate to their own tools
+        $nav_prefix = '../' . ($role === 'admin' ? 'admin_view/' : 'staff_view/');
     } elseif (in_array($role, ['staff','admin'], true) && strpos($script_path, '/staff_view/') !== false) {
         // Staff in staff_view - use current directory
         $nav_prefix = '';
-    } elseif ($role === 'faculty' && strpos($script_path, '/faculty_view/') !== false) {
-        // Faculty in faculty_view - use current directory
-        $nav_prefix = '';
-    } elseif ($role === 'student' && strpos($script_path, '/student_view/') !== false) {
-        // Student in student_view - use current directory
+    } elseif (in_array($role, ['student','faculty']) && strpos($script_path, '/member_view/') !== false) {
+        // Student or faculty in member_view - use current directory
         $nav_prefix = '';
     } else {
         // Default: use current directory
@@ -160,43 +162,26 @@ if ($is_subdirectory) {
     <ul class="navbar-nav">
       <li><a href="<?php echo $nav_prefix; ?>dashboard.php">Home</a></li>
 
-    <?php if (in_array($role, ['staff','admin'], true)): ?>
-        <li><a href="<?php echo $nav_prefix; ?>members.php">Members</a></li>
-        <li><a href="<?php echo $nav_prefix; ?>attendance.php">Attendance</a></li>
-        <li><a href="<?php echo $nav_prefix; ?>equipment.php">Equipment</a></li>
-        <li><a href="<?php echo $nav_prefix; ?>billing.php">Billing</a></li>
-        <li><a href="<?php echo $nav_prefix; ?>trainers.php">Trainers</a></li>
-        <li><a href="<?php 
-            if (strpos($script_path, '/staff_view/') !== false) {
-                echo 'progress.php';
-            } elseif (strpos($script_path, '/faculty_view/') !== false) {
-                echo './progress.php';
-            } else {
-                echo 'staff_view/progress.php';
-            }
-        ?>">Progress</a></li>
-        <li><a href="<?php 
-            if (strpos($script_path, '/staff_view/') !== false) {
-                echo 'vitals.php';
-            } elseif (strpos($script_path, '/faculty_view/') !== false) {
-                echo './vitals.php';
-            } else {
-                echo 'staff_view/vitals.php';
-            }
-        ?>">Vital Signs</a></li>
+        <?php if ($role === 'admin'): ?>
+                <li><a href="<?php echo $nav_prefix; ?>configuration.php">Configuration</a></li>
+                <li><a href="<?php echo $nav_prefix; ?>logs.php">Logs</a></li>
 
-      <?php elseif ($role === 'student'): ?>
-        <li><a href="<?php echo $nav_prefix; ?>attendance.php">Attendance</a></li>
-        <li><a href="<?php echo $nav_prefix; ?>billing.php">Billing</a></li>
-        <li><a href="<?php echo $nav_prefix; ?>vitals.php">Vital Signs</a></li>
-        <li><a href="<?php echo $nav_prefix; ?>progress.php">Progress</a></li>
+            <?php elseif (in_array($role, ['staff'], true)): ?>
+                <li><a href="<?php echo $nav_prefix; ?>members.php">Members</a></li>
+                <li><a href="<?php echo $nav_prefix; ?>equipment.php">Equipment</a></li>
+                <li><a href="<?php echo $nav_prefix; ?>due_members.php">Due Members</a></li>
 
-      <?php elseif ($role === 'faculty'): ?>
-        <li><a href="<?php echo $nav_prefix; ?>attendance.php">Attendance</a></li>
-        <li><a href="<?php echo $nav_prefix; ?>members.php">Students</a></li>
-        <li><a href="<?php echo $nav_prefix; ?>progress.php">Progress</a></li>
-        <li><a href="<?php echo $nav_prefix; ?>vitals.php">Vital Signs</a></li>
-        <li><a href="<?php echo $nav_prefix; ?>schedule.php">Schedule</a></li>
+            <?php elseif (in_array($role, ['trainer'], true)): ?>
+                <li><a href="<?php echo $nav_prefix; ?>sessions.php">Sessions</a></li>
+
+
+ 
+
+            <?php elseif (in_array($role, ['student', 'faculty', 'member'], true)): ?>
+        <li><a href="<?php echo $nav_prefix; ?>program.php">Program</a></li>
+        <li><a href="<?php echo $nav_prefix; ?>sessions.php">Sessions</a></li>
+
+
       <?php endif; ?>
     </ul>
 
@@ -226,40 +211,26 @@ if ($is_subdirectory) {
 
       <li><a href="<?php echo $nav_prefix; ?>dashboard.php">Home</a></li>
 
-    <?php if (in_array($role, ['staff','admin'], true)): ?>
-      <li><a href="<?php echo $nav_prefix; ?>members.php">Members</a></li>
-      <li><a href="<?php echo $nav_prefix; ?>attendance.php">Attendance</a></li>
-      <li><a href="<?php echo $nav_prefix; ?>equipment.php">Equipment</a></li>
-      <li><a href="<?php echo $nav_prefix; ?>billing.php">Billing</a></li>
-      <li><a href="<?php echo $nav_prefix; ?>trainers.php">Trainers</a></li>
-      <li><a href="<?php 
-            if (strpos($script_path, '/staff_view/') !== false) {
-                echo 'vitals.php';
-            } elseif (strpos($script_path, '/faculty_view/') !== false) {
-                echo './vitals.php';
-            } else {
-                echo 'staff_view/vitals.php';
-            }
-        ?>">Vital Signs</a></li>
-      <li><a href="<?php 
-            if (strpos($script_path, '/staff_view/') !== false) {
-                echo 'progress.php';
-            } elseif (strpos($script_path, '/faculty_view/') !== false) {
-                echo './progress.php';
-            } else {
-                echo 'staff_view/progress.php';
-            }
-        ?>">Progress</a></li>
+        <?php if ($role === 'admin'): ?>
+            <li><a href="<?php echo $nav_prefix; ?>dashboard.php">Home</a></li>
+            <li><a href="<?php echo $nav_prefix; ?>configuration.php">Configuration</a></li>
+            <li><a href="<?php echo $nav_prefix; ?>logs.php">Logs</a></li>
 
-    <?php elseif ($role === 'student'): ?>
+        <?php elseif (in_array($role, ['staff'], true)): ?>
+            <li><a href="<?php echo $nav_prefix; ?>members.php">Members</a></li>
+            <li><a href="<?php echo $nav_prefix; ?>attendance.php">Attendance</a></li>
+            <li><a href="<?php echo $nav_prefix; ?>equipment.php">Equipment</a></li>
+            <li><a href="<?php echo $nav_prefix; ?>billing.php">Billing</a></li>
+            <li><a href="<?php echo $nav_prefix; ?>trainers.php">Trainers</a></li>
+            <li><a href="<?php echo $nav_prefix; ?>vitals.php">Vital Signs</a></li>
+            <li><a href="<?php echo $nav_prefix; ?>progress.php">Progress</a></li>
+
+        <?php elseif (in_array($role, ['student', 'faculty', 'member'], true)): ?>
+      <li><a href="<?php echo $nav_prefix; ?>program.php">Program</a></li>
+      <li><a href="<?php echo $nav_prefix; ?>sessions.php">Sessions</a></li>
       <li><a href="<?php echo $nav_prefix; ?>attendance.php">Attendance</a></li>
       <li><a href="<?php echo $nav_prefix; ?>billing.php">Billing</a></li>
       <li><a href="<?php echo $nav_prefix; ?>vitals.php">Vital Signs</a></li>
-      <li><a href="<?php echo $nav_prefix; ?>progress.php">Progress</a></li>
-
-    <?php elseif ($role === 'faculty'): ?>
-      <li><a href="<?php echo $nav_prefix; ?>attendance.php">Attendance</a></li>
-      <li><a href="<?php echo $nav_prefix; ?>members.php">Students</a></li>
       <li><a href="<?php echo $nav_prefix; ?>progress.php">Progress</a></li>
       <li><a href="<?php echo $nav_prefix; ?>schedule.php">Schedule</a></li>
     <?php endif; ?>

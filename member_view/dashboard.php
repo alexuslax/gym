@@ -64,15 +64,45 @@ $stmt = $pdo->prepare('SELECT * FROM attendance WHERE member_id = ? ORDER BY dat
 $stmt->execute([$member_id]);
 $attendance_logs = $stmt->fetchAll();
 
-// Last payment
-$stmt = $pdo->prepare('SELECT * FROM billing WHERE member_id = ? ORDER BY payment_date DESC LIMIT 1');
+// Credit and Balance from members table and billing table
+$stmt = $pdo->prepare('SELECT credit_balance FROM members WHERE member_id = ?');
 $stmt->execute([$member_id]);
-$last_payment = $stmt->fetch();
+$member_balance = $stmt->fetch();
+$total_credit = $member_balance['credit_balance'] ?? 0;
+
+// Calculate outstanding balance (sum of unpaid bills)
+$stmt = $pdo->prepare("SELECT COALESCE(SUM(billing_amount), 0) FROM billing WHERE member_id = ? AND payment_status IN ('Pending','Overdue')");
+$stmt->execute([$member_id]);
+$total_balance = $stmt->fetchColumn() ?: 0;
 
 // Last progress
 $stmt = $pdo->prepare('SELECT * FROM progress WHERE member_id = ? ORDER BY progress_date DESC LIMIT 1');
 $stmt->execute([$member_id]);
 $last_progress = $stmt->fetch();
+
+// Get fitness goal
+$stmt = $pdo->prepare('SELECT fitness_goal FROM member_fitness_goals WHERE member_id = ? LIMIT 1');
+$stmt->execute([$member_id]);
+$fitness_goal = $stmt->fetch();
+
+// Get upcoming sessions
+$stmt = $pdo->prepare('
+    SELECT 
+        mts.session_id,
+        mts.session_date,
+        mts.session_time,
+        mts.session_duration,
+        t.first_name,
+        t.last_name,
+        t.specialization
+    FROM member_training_sessions mts
+    JOIN trainers t ON mts.trainer_id = t.trainer_id
+    WHERE mts.member_id = ? AND mts.session_date >= CURDATE() AND mts.status != "cancelled"
+    ORDER BY mts.session_date, mts.session_time
+    LIMIT 1
+');
+$stmt->execute([$member_id]);
+$next_session = $stmt->fetch();
 
 // Page title and header
 $page_title = 'Member Dashboard';
@@ -170,6 +200,14 @@ body {
 	box-shadow: 0 30px 60px -15px rgba(245, 158, 11, 0.15);
 }
 
+.stat-card-red {
+	background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+}
+
+.stat-card-red:hover {
+	box-shadow: 0 30px 60px -15px rgba(239, 68, 68, 0.15);
+}
+
 .stat-card::before {
 	content: '';
 	position: absolute;
@@ -233,6 +271,11 @@ body {
 .stat-icon-amber {
 	background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
 	box-shadow: 0 8px 16px -4px rgba(245, 158, 11, 0.3);
+}
+
+.stat-icon-red {
+	background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+	box-shadow: 0 8px 16px -4px rgba(239, 68, 68, 0.3);
 }
 
 .stat-icon svg {
@@ -309,7 +352,7 @@ body {
 .activity-item {
 	display: flex;
 	align-items: center;
-	justify-between;
+	justify-content: space-between;
 	padding: 1rem;
 	background-color: white;
 	border-radius: 0.75rem;
@@ -486,6 +529,7 @@ body {
 			<p class="dashboard-subtitle">Here's a quick overview of your membership and recent activity.</p>
 		</div>
 		<div class="stats-grid">
+			<!-- Membership Status Card -->
 			<div class="stat-card stat-card-blue">
 				<div class="stat-card-content">
 					<div class="stat-icon stat-icon-blue">
@@ -496,95 +540,78 @@ body {
 					<div class="stat-label stat-label-blue">Membership Status</div>
 					<div class="stat-value"><?php echo htmlspecialchars($status); ?></div>
 					<div class="stat-subtext">Plan: <span class="stat-subtext-bold"><?php echo htmlspecialchars($plan); ?></span></div>
-					<div class="stat-subtext">Expiry: <span class="stat-subtext-bold"><?php echo $expiry ?: 'N/A'; ?></span></div>
 				</div>
 			</div>
+
+			<!-- Credit Card -->
 			<div class="stat-card stat-card-green">
 				<div class="stat-card-content">
 					<div class="stat-icon stat-icon-green">
 						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-							<path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5A2.25 2.25 0 0 1 5.25 5.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25M3 18.75A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75M3 18.75v-8.25A2.25 2.25 0 0 1 5.25 8.25h13.5A2.25 2.25 0 0 1 21 10.5v8.25"/>
+							<path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0l.879-.659m-6-2.318a6 6 0 0 1 12 0M3.75 4.5h16.5a1.5 1.5 0 0 1 1.5 1.5v2.25a1.5 1.5 0 0 1-1.5 1.5H3.75a1.5 1.5 0 0 1-1.5-1.5V6a1.5 1.5 0 0 1 1.5-1.5z"/>
 						</svg>
 					</div>
-					<div class="stat-label stat-label-green">Attendance This Month</div>
-					<div class="stat-value"><?php echo $attendance_this_month; ?></div>
-					<div class="stat-subtext">Total Sessions: <span class="stat-subtext-bold"><?php echo $attendance_total; ?></span></div>
+					<div class="stat-label stat-label-green">Credit</div>
+					<div class="stat-value" style="font-size: 1.5rem;">₱<?php echo number_format($total_credit, 2); ?></div>
+					<div class="stat-subtext">Available balance</div>
 				</div>
 			</div>
+
+			<!-- Balance Card -->
+			<div class="stat-card stat-card-red">
+				<div class="stat-card-content">
+					<div class="stat-icon stat-icon-red">
+						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0zm-9 3.75h.008v.008H12v-.008z"/>
+						</svg>
+					</div>
+					<div class="stat-label" style="color: #991b1b;">Amount Due</div>
+					<div class="stat-value" style="font-size: 1.5rem;">₱<?php echo number_format($total_balance, 2); ?></div>
+					<div class="stat-subtext">Outstanding balance</div>
+				</div>
+			</div>
+
+			<!-- Program Card -->
+			<div class="stat-card stat-card-green">
+				<div class="stat-card-content">
+					<div class="stat-icon stat-icon-green">
+						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M9 4.5v15m6-15v15m-11.08.5H2.25A2.25 2.25 0 0 0 0 19.5v.75c0 1.036.84 1.875 1.95 1.875h15.1c1.11 0 1.95-.84 1.95-1.875v-.75A2.25 2.25 0 0 0 21.75 19.5h-2.17"/>
+						</svg>
+					</div>
+					<div class="stat-label stat-label-green">Current Program</div>
+					<?php if ($fitness_goal): 
+						$goal_names = ['weight_loss' => 'Weight Loss', 'muscle_gain' => 'Muscle Gain', 'endurance' => 'Endurance', 'general_fitness' => 'General Fitness'];
+						$program_name = $goal_names[$fitness_goal['fitness_goal']] ?? 'Not Set';
+					?>
+						<div class="stat-value"><?php echo htmlspecialchars($program_name); ?></div>
+						<div class="stat-subtext">Active program</div>
+					<?php else: ?>
+						<div class="stat-subtext">No program selected yet</div>
+						<a href="program.php" style="margin-top: 0.75rem; color: #22c55e; font-weight: 700; text-decoration: none;">Create Program →</a>
+					<?php endif; ?>
+				</div>
+			</div>
+
+			<!-- Upcoming Session Card -->
 			<div class="stat-card stat-card-amber">
 				<div class="stat-card-content">
 					<div class="stat-icon stat-icon-amber">
 						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-							<path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
+							<path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5-13.5H3.75A2.25 2.25 0 0 0 1.5 3.75v16.5A2.25 2.25 0 0 0 3.75 22.5h16.5a2.25 2.25 0 0 0 2.25-2.25V3.75A2.25 2.25 0 0 0 20.25 1.5Z"/>
 						</svg>
 					</div>
-					<div class="stat-label stat-label-amber" style="color: #b45309;">Progress Summary</div>
-					<?php if ($last_progress): ?>
-						<div class="stat-value" style="font-size: 1.125rem;"><?php echo htmlspecialchars($last_progress['summary'] ?? 'Updated'); ?></div>
-						<div class="stat-subtext">Date: <span class="stat-subtext-bold"><?php echo htmlspecialchars($last_progress['progress_date']); ?></span></div>
+					<div class="stat-label stat-label-amber" style="color: #b45309;">Upcoming Session</div>
+					<?php if ($next_session): ?>
+						<div class="stat-value" style="font-size: 1rem;"><?php echo date('M d, Y', strtotime($next_session['session_date'])); ?></div>
+						<div class="stat-subtext">Time: <span class="stat-subtext-bold"><?php echo date('g:i A', strtotime($next_session['session_time'])); ?></span></div>
+						<div class="stat-subtext">Trainer: <span class="stat-subtext-bold"><?php echo htmlspecialchars($next_session['first_name'] . ' ' . $next_session['last_name']); ?></span></div>
 					<?php else: ?>
-						<div class="stat-subtext">No progress recorded yet.</div>
+						<div class="stat-subtext">No upcoming sessions</div>
+						<a href="sessions.php" style="margin-top: 0.75rem; color: #f59e0b; font-weight: 700; text-decoration: none;">Book Session →</a>
 					<?php endif; ?>
 				</div>
 			</div>
-		</div>
-		<div class="activity-section">
-			<h3 class="activity-title">Recent Activity</h3>
-			<div class="activity-container">
-				<ul class="activity-list">
-					<?php if ($attendance_logs): ?>
-						<?php foreach (array_slice($attendance_logs, 0, 3) as $log): ?>
-							<li class="activity-item">
-								<div class="activity-item-left">
-									<div class="activity-dot activity-dot-green"></div>
-									<div>
-										<span class="activity-text">Check-in: <?php echo htmlspecialchars($log['date']); ?> <?php echo htmlspecialchars($log['time_in']); ?></span>
-										<?php if ($log['time_out']): ?>
-											<span class="activity-text-sub" style="margin-left: 0.5rem;">• Check-out: <?php echo htmlspecialchars($log['time_out']); ?></span>
-										<?php endif; ?>
-									</div>
-								</div>
-							</li>
-						<?php endforeach; ?>
-					<?php else: ?>
-						<li class="empty-state">No attendance records found.</li>
-					<?php endif; ?>
-					<li class="activity-item">
-						<div class="activity-item-left">
-							<div class="activity-dot activity-dot-blue"></div>
-							<span class="activity-text">Last Payment:</span>
-						</div>
-						<span class="activity-value"><?php echo $last_payment ? '₱' . htmlspecialchars($last_payment['payment_amount']) . ' on ' . htmlspecialchars($last_payment['payment_date']) : 'No payments found.'; ?></span>
-					</li>
-					<li class="activity-item">
-						<div class="activity-item-left">
-							<div class="activity-dot activity-dot-amber"></div>
-							<span class="activity-text">Last Progress Update:</span>
-						</div>
-						<span class="activity-value"><?php echo $last_progress ? htmlspecialchars($last_progress['progress_date']) : 'No progress found.'; ?></span>
-					</li>
-				</ul>
-			</div>
-		</div>
-		<div class="button-group">
-			<a href="attendance.php" class="btn btn-primary">
-				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-					<path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5A2.25 2.25 0 0 1 5.25 5.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25M3 18.75A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75M3 18.75v-8.25A2.25 2.25 0 0 1 5.25 8.25h13.5A2.25 2.25 0 0 1 21 10.5v8.25"/>
-				</svg>
-				View Attendance
-			</a>
-			<a href="billing.php" class="btn btn-green">
-				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-					<path stroke-linecap="round" stroke-linejoin="round" d="M2.25 7.5A2.25 2.25 0 0 1 4.5 5.25h15A2.25 2.25 0 0 1 21.75 7.5v9A2.25 2.25 0 0 1 19.5 18.75h-15A2.25 2.25 0 0 1 2.25 16.5v-9z"/>
-				</svg>
-				View Billing
-			</a>
-			<a href="profile.php" class="btn btn-slate">
-				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-					<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v-1.125A3.375 3.375 0 0 0 12.375 12.75h-3.75A3.375 3.375 0 0 0 5.25 16.125V17.25M12.75 9A3 3 0 1 1 6.75 9a3 3 0 0 1 6 0M18.75 8.25l2.25 2.25-6 6-2.25.75.75-2.25 6-6z"/>
-				</svg>
-				Update Profile
-			</a>
 		</div>
 	</div>
 </div>

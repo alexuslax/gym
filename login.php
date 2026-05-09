@@ -2,6 +2,25 @@
 session_start();
 require_once 'config/functions.php';
 
+// Fetch membership plans enum values from `membership_plans.plan_type` for signup dropdown
+$membership_plans = [];
+try {
+    $col = $pdo->query("SHOW COLUMNS FROM membership_plans LIKE 'plan_type'")->fetch();
+    if (!empty($col['Type'])) {
+        // Type looks like: enum('Monthly','Quarterly','Annual')
+        if (preg_match("/^enum\((.*)\)$/", $col['Type'], $matches)) {
+            // split by comma while respecting quotes
+            $raw = $matches[1];
+            $vals = array_map(function($v){ return trim($v, "'\" "); }, explode(',', $raw));
+            foreach ($vals as $v) {
+                $membership_plans[] = $v;
+            }
+        }
+    }
+} catch (Exception $e) {
+    // Leave empty if not available
+}
+
 $error_message = '';
 $form_data = [];
 $password_mismatch = false;
@@ -47,14 +66,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     $stmt->execute([$user['user_id'], $user['user_id'], $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT']]);
                     // Redirect based on role
                     if ($user['role'] === 'admin') {
-                        // Admins see the technical system tools
-                        header('Location: admin_view/members.php');
+                        // Admins see the technical system tools (dashboard)
+                        header('Location: admin_view/dashboard.php');
                     } elseif ($user['role'] === 'staff') {
                         header('Location: staff_view/dashboard.php');
-                    } elseif ($user['role'] === 'faculty') {
-                        header('Location: faculty_view/dashboard.php');
+                    } elseif ($user['role'] === 'trainer') {
+                        header('Location: trainer_view/dashboard.php');
                     } else {
-                        header('Location: student_view/dashboard.php');
+                        // Both student and faculty use member_view (member_type field in database distinguishes them)
+                        header('Location: member_view/dashboard.php');
                     }
                     exit();
                 } else {
@@ -91,6 +111,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $signup_contact = sanitizeInput($_POST['signup_contact']);
         $signup_address = sanitizeInput($_POST['signup_address']);
         $profile_picture = null;
+        // Membership plan selection from signup (student/faculty)
+        $signup_membership_plan = isset($_POST['signup_membership_plan']) ? sanitizeInput($_POST['signup_membership_plan']) : null;
 
         // Validate common required fields
         if (empty($signup_username) || empty($signup_email) || empty($signup_password) || empty($signup_confirm_password) || empty($signup_first_name) || empty($signup_last_name) || empty($signup_gender) || empty($signup_dob) || empty($signup_contact) || empty($signup_address)) {
@@ -139,6 +161,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     
                     if (empty($signup_student_number)) {
                         throw new Exception('Student number is required.');
+                    }
+                    if (empty($signup_membership_plan)) {
+                        throw new Exception('Membership plan is required.');
                     }
                     
                     // Handle Certificate of Registration upload
@@ -189,6 +214,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     
                     // Store pending registration data as JSON for later processing on approval
                     $pending_data = json_encode([
+                        'member_type' => 'student',
                         'first_name' => $signup_first_name,
                         'last_name' => $signup_last_name,
                         'middle_name' => $signup_middle_name,
@@ -200,6 +226,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         'registration_date' => date('Y-m-d'),
                         'rfid_number' => $signup_rfid,
                         'student_number' => $signup_student_number,
+                        'membership_plan' => $signup_membership_plan,
                         'cor_document' => $cor_path,
                         'medical_certificate' => $medical_cert_path,
                         'id_card' => $id_card_path
@@ -214,23 +241,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         if (empty($signup_hire_date) || empty($signup_faculty_number)) {
                             throw new Exception('Please fill in all faculty required fields.');
                         }
+                        if (empty($signup_membership_plan)) {
+                            throw new Exception('Membership plan is required for faculty.');
+                        }
 
                         // Prepare upload paths
                         $cor_path_f = null;
                         $medical_cert_path_f = null;
                         $id_card_path_f = null;
 
-                        // Certificate of Registration
-                        if (isset($_FILES['signup_cor']) && $_FILES['signup_cor']['error'] === UPLOAD_ERR_OK) {
-                            $ext = pathinfo($_FILES['signup_cor']['name'], PATHINFO_EXTENSION);
-                            $new_filename = uniqid('cor_') . '.' . $ext;
-                            $upload_dir = 'img/documents/';
-                            if (!is_dir($upload_dir)) mkdir($upload_dir, 0777, true);
-                            $upload_path = $upload_dir . $new_filename;
-                            if (move_uploaded_file($_FILES['signup_cor']['tmp_name'], $upload_path)) {
-                                $cor_path_f = $upload_path;
-                            }
-                        }
+                        // No Certificate of Registration required for faculty registration
 
                         // Medical Certificate
                         if (isset($_FILES['signup_medical_cert']) && $_FILES['signup_medical_cert']['error'] === UPLOAD_ERR_OK) {
@@ -257,6 +277,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         }
 
                         $pending_data = json_encode([
+                            'member_type' => 'faculty',
                             'first_name' => $signup_first_name,
                             'last_name' => $signup_last_name,
                             'middle_name' => $signup_middle_name,
@@ -268,9 +289,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                             'hire_date' => $signup_hire_date,
                             'rfid_number' => $signup_rfid,
                             'faculty_number' => $signup_faculty_number,
-                            'cor_document' => $cor_path_f,
+                            // Certificate of Registration intentionally omitted for faculty
                             'medical_certificate' => $medical_cert_path_f,
                             'id_card' => $id_card_path_f,
+                            'membership_plan' => $signup_membership_plan,
                             'registration_date' => date('Y-m-d')
                         ]);
                     }
@@ -322,6 +344,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         }
 
                         $pending_data = json_encode([
+                            'member_type' => 'staff',
                             'first_name' => $signup_first_name,
                             'last_name' => $signup_last_name,
                             'middle_name' => $signup_middle_name,
@@ -341,15 +364,35 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
                     // Insert into users table only - set is_active to 0 (pending approval)
                     // Student/Faculty/Staff ID will be generated when staff approves
-                    if ($signup_type === 'faculty') {
-                        $role = 'faculty';
-                    } elseif ($signup_type === 'staff') {
-                        $role = 'staff';
-                    } else {
-                        $role = 'student';
+                    // All new accounts created with role='member' pending approval
+                    // The account_type in pending_data JSON indicates student/faculty/staff
+                    $role = 'member';
+                    // Check if `pending_data` column exists in `users` table
+                    $pending_col = false;
+                    try {
+                        $col = $pdo->query("SHOW COLUMNS FROM users LIKE 'pending_data'")->fetch();
+                        if (!empty($col)) $pending_col = true;
+                    } catch (Exception $e) {
+                        // ignore - will fallback to no pending_data column
                     }
-                    $stmt = $pdo->prepare("INSERT INTO users (user_id, username, password, email, full_name, role, is_active, pending_data) VALUES (?, ?, ?, ?, ?, ?, 0, ?)");
-                    $stmt->execute([$user_id, $signup_username, $hashed_password, $signup_email, $full_name, $role, $pending_data]);
+
+                    // Build insert dynamically depending on available columns
+                    $columns = ['user_id','username','password','email','full_name','role','is_active'];
+                    $placeholders = array_fill(0, count($columns), '?');
+                    $params = [$user_id, $signup_username, $hashed_password, $signup_email, $full_name, $role, 0];
+
+                    if ($pending_col) {
+                        $columns[] = 'pending_data';
+                        $placeholders[] = '?';
+                        $params[] = $pending_data;
+                    }
+
+                    $sql = "INSERT INTO users (" . implode(', ', $columns) . ") VALUES (" . implode(', ', $placeholders) . ")";
+                    $stmt = $pdo->prepare($sql);
+                    $stmt->execute($params);
+                    if (!$pending_col) {
+                        error_log('Notice: users.pending_data column not found — pending registration JSON not saved for user ' . $user_id);
+                    }
                     
                     $pdo->commit();
                     
@@ -1048,6 +1091,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 </div>
             </form>
 
+            <!-- Demo Accounts Section -->
+            <div class="demo-accounts" style="margin-top: 2rem; padding: 1rem; background: #f8f9fa; border-radius: 8px; border: 1px solid #e9ecef;">
+                <h3 style="margin: 0 0 1rem 0; color: #495057; font-size: 1.1rem;">Demo Accounts</h3>
+                <div style="display: grid; gap: 0.5rem; font-size: 0.9rem;">
+                    <div><strong>Staff:</strong> Username: staff, Password: password</div>
+                    <div><strong>Member:</strong> Username: stephwerd, Password: password</div>
+                </div>
+            </div>
+
             <!-- Role Selection (hidden by default) -->
             <div id="role-selection" class="hidden">
                 <h2 class="form-title">Choose Your Account Type</h2>
@@ -1075,17 +1127,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         </div>
                         <p class="role-description">Sign up as a faculty to manage students, schedule sessions, and track training programs.</p>
                     </button>
-                    <button type="button" id="select-staff" class="role-card">
-                        <div class="role-card-header">
-                            <div class="role-icon role-icon-yellow">
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2">
-                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zM6 20v-1a4 4 0 014-4h4a4 4 0 014 4v1"/>
-                                </svg>
-                            </div>
-                            <h3 class="role-title">Staff</h3>
-                        </div>
-                        <p class="role-description">Sign up as staff to manage operations and access staff tools.</p>
-                    </button>
+                    
                 </div>
                 <div class="text-center">
                     <button type="button" id="back-to-login-from-role" class="text-link">Back to Login</button>
@@ -1186,6 +1228,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         <label class="form-label">Student Number</label>
                         <input name="signup_student_number" type="text" required class="form-input" placeholder="Enter student number" value="<?php echo htmlspecialchars($form_data['signup_student_number'] ?? ''); ?>" />
                     </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Membership Plan</label>
+                    <select name="signup_membership_plan" required class="form-select">
+                        <?php if (!empty($membership_plans)): ?>
+                            <option value="">Select plan</option>
+                            <?php foreach ($membership_plans as $plan): ?>
+                                <option value="<?php echo htmlspecialchars($plan); ?>" <?php echo (isset($form_data['signup_membership_plan']) && $form_data['signup_membership_plan'] === $plan) ? 'selected' : ''; ?>><?php echo htmlspecialchars($plan); ?></option>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <option value="" disabled>No plans available</option>
+                        <?php endif; ?>
+                    </select>
                 </div>
 
                 <div class="form-group">
@@ -1331,9 +1387,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 </div>
 
                 <div class="form-group">
-                    <label class="form-label">Certificate of Registration</label>
-                    <input type="file" name="signup_cor" accept="image/*,.pdf" required class="form-input" style="padding: 0.5rem;" />
-                    <p class="helper-text">Upload image or PDF file</p>
+                    <label class="form-label">Membership Plan</label>
+                    <select name="signup_membership_plan" required class="form-select">
+                        <?php if (!empty($membership_plans)): ?>
+                            <option value="">Select plan</option>
+                            <?php foreach ($membership_plans as $plan): ?>
+                                <option value="<?php echo htmlspecialchars($plan); ?>" <?php echo (isset($form_data['signup_membership_plan']) && $form_data['signup_membership_plan'] === $plan) ? 'selected' : ''; ?>><?php echo htmlspecialchars($plan); ?></option>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <option value="" disabled>No plans available</option>
+                        <?php endif; ?>
+                    </select>
                 </div>
 
                 <div class="form-group">

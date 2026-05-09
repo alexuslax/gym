@@ -8,30 +8,83 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         switch ($_POST['action']) {
             case 'add_billing':
                 try {
-                    $billing_id = generateID('BIL', 'billing', 'billing_id');
                     $member_id = sanitizeInput($_POST['member_id']);
                     $plan_id = isset($_POST['plan_id']) ? sanitizeInput($_POST['plan_id']) : null;
-                    $amount = sanitizeInput($_POST['amount']);
+                    $amount = isset($_POST['amount']) ? sanitizeInput($_POST['amount']) : 0;
                     $due_date = sanitizeInput($_POST['due_date']);
                     $description = sanitizeInput($_POST['description'] ?? '');
+                    $apply_credit = isset($_POST['apply_credit']) ? (int)$_POST['apply_credit'] : 0;
+                    // Additional charges (JSON array of {name,amount})
+                    $additional_charges_json = isset($_POST['additional_charges']) ? $_POST['additional_charges'] : '[]';
+                    $additional_charges = json_decode($additional_charges_json, true);
+                    if (!is_array($additional_charges)) $additional_charges = [];
+
                     // Get billing_type and price from selected plan if available
                     $billing_type = '';
-                    $payment_amount = $amount;
+                    $billing_amount = floatval($amount);
                     if ($plan_id) {
                         $plan_stmt = $pdo->prepare("SELECT plan_type, price FROM membership_plans WHERE plan_id = ?");
                         $plan_stmt->execute([$plan_id]);
                         $plan_row = $plan_stmt->fetch(PDO::FETCH_ASSOC);
                         if ($plan_row) {
                             $billing_type = $plan_row['plan_type'];
-                            $payment_amount = $plan_row['price'];
+                            $billing_amount = floatval($plan_row['price']);
                         }
                     }
 
-                    $stmt = $pdo->prepare("INSERT INTO billing (billing_id, member_id, plan_id, payment_amount, due_date, description, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                    $stmt->execute([$billing_id, $member_id, $plan_id, $payment_amount, $due_date, $description, $_SESSION['user_id']]);
+                    // Add additional charges amounts
+                    $sum_add = 0.0;
+                    foreach ($additional_charges as $c) {
+                        $amt = isset($c['amount']) ? floatval($c['amount']) : 0.0;
+                        $sum_add += $amt;
+                    }
+                    $billing_amount += $sum_add;
+
+                    // Apply credit if checked
+                    $credit_applied = 0.0;
+                    if ($apply_credit) {
+                        $stmt = $pdo->prepare("SELECT credit_balance FROM members WHERE member_id = ?");
+                        $stmt->execute([$member_id]);
+                        $member_credit = floatval($stmt->fetchColumn() ?? 0);
+                        
+                        if ($member_credit > 0) {
+                            $credit_applied = min($member_credit, $billing_amount);
+                            $billing_amount -= $credit_applied;
+                            // Deduct credit from member balance
+                            $stmt = $pdo->prepare("UPDATE members SET credit_balance = credit_balance - ? WHERE member_id = ?");
+                            $stmt->execute([$credit_applied, $member_id]);
+                        }
+                    }
+
+                    // Append charges detail to description
+                    if (!empty($additional_charges)) {
+                        $charges_note = 'Additional charges: ' . json_encode($additional_charges);
+                        $description = trim(($description ? $description . "\n" : '') . $charges_note);
+                    }
+                    if ($credit_applied > 0) {
+                        $description = trim(($description ? $description . "\n" : '') . 'Credit applied: ₱' . number_format($credit_applied, 2));
+                    }
+
+                    $stmt = $pdo->prepare("INSERT INTO billing (member_id, plan_id, billing_amount, due_date, description, created_by) VALUES (?, ?, ?, ?, ?, ?)");
+                    $stmt->execute([$member_id, $plan_id, $billing_amount, $due_date, $description, $_SESSION['user_id']]);
                     
-                    header('Location: billing.php?success=Billing record added successfully');
-                    exit();
+                    // Get the last inserted billing_id (auto-increment)
+                    $billing_id = $pdo->lastInsertId();
+                    
+                    // Check if it's an AJAX request
+                    if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+                        header('Content-Type: application/json');
+                        echo json_encode([
+                            'success' => true,
+                            'billing_id' => $billing_id,
+                            'billing_amount' => floatval($billing_amount),
+                            'due_date' => $due_date
+                        ]);
+                        exit();
+                    } else {
+                        header('Location: billing_view.php?billing_id=' . $billing_id);
+                        exit();
+                    }
                 } catch (PDOException $e) {
                     header('Location: billing.php?error=' . urlencode('Error adding billing record: ' . $e->getMessage()));
                     exit();
@@ -46,11 +99,137 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $payment_date = sanitizeInput($_POST['payment_date']);
                 $transaction_id = sanitizeInput($_POST['transaction_id']);
                 
-                $stmt = $pdo->prepare("UPDATE billing SET payment_date = ?, transaction_id = ?, payment_status = 'Paid' WHERE billing_id = ?");
-                $stmt->execute([$payment_date, $transaction_id, $billing_id]);
+                $stmt = $pdo->prepare("UPDATE billing SET transaction_id = ?, payment_status = 'Paid' WHERE billing_id = ?");
+                $stmt->execute([$transaction_id, $billing_id]);
                 
                 header('Location: billing.php?success=Payment recorded successfully');
                 exit();
+                break;
+                
+            case 'add_payment':
+                try {
+                    $billing_id = sanitizeInput($_POST['selected_billing_id'] ?? ($_POST['billing_id'] ?? ''));
+                    $member_id = sanitizeInput($_POST['member_id'] ?? '');
+                    $payment_amount = floatval(sanitizeInput($_POST['payment_amount'] ?? 0));
+                    $payment_date = sanitizeInput($_POST['payment_date'] ?? '');
+                    $transaction_id = sanitizeInput($_POST['transaction_id'] ?? '');
+                    $payment_method = sanitizeInput($_POST['payment_method'] ?? '');
+                    $payment_type = sanitizeInput($_POST['payment_type'] ?? 'full');
+                    $installment_no = isset($_POST['installment_no']) ? intval($_POST['installment_no']) : 0;
+                    $note = sanitizeInput($_POST['note'] ?? '');
+                    $apply_credit = isset($_POST['apply_credit']) ? (int)$_POST['apply_credit'] : 0;
+
+                    if ($billing_id === '' || $member_id === '') {
+                        if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+                            header('Content-Type: application/json');
+                            echo json_encode(['success' => false, 'error' => 'Missing billing or member ID.']);
+                            exit();
+                        }
+                        header('Location: billing.php?error=' . urlencode('Missing billing or member ID.'));
+                        exit();
+                    }
+
+                    if ($payment_amount <= 0) {
+                        if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+                            header('Content-Type: application/json');
+                            echo json_encode(['success' => false, 'error' => 'Payment amount must be greater than 0.']);
+                            exit();
+                        }
+                        header('Location: billing.php?error=' . urlencode('Payment amount must be greater than 0.'));
+                        exit();
+                    }
+
+                    if ($payment_date === '') {
+                        $payment_date = date('Y-m-d H:i:s');
+                    } else {
+                        // Normalize date-only values to include time
+                        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $payment_date)) {
+                            $payment_date .= ' 00:00:00';
+                        }
+                    }
+                    
+                    // Apply credit if checked
+                    $credit_to_deduct = 0.0;
+                    if ($apply_credit) {
+                        $stmt = $pdo->prepare("SELECT credit_balance FROM members WHERE member_id = ?");
+                        $stmt->execute([$member_id]);
+                        $member_credit = floatval($stmt->fetchColumn() ?? 0);
+                        
+                        if ($member_credit > 0) {
+                            $credit_to_deduct = min($member_credit, $payment_amount);
+                            // Deduct credit from member balance
+                            $stmt = $pdo->prepare("UPDATE members SET credit_balance = credit_balance - ? WHERE member_id = ?");
+                            $stmt->execute([$credit_to_deduct, $member_id]);
+                        }
+                    }
+                    
+                    // Insert payment record
+                    $stmt = $pdo->prepare("INSERT INTO payments (billing_id, member_id, payment_amount, payment_date, transaction_id, payment_method, payment_type, installment_no, note, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    $stmt->execute([$billing_id, $member_id, $payment_amount, $payment_date, $transaction_id, $payment_method, $payment_type, $installment_no, $note, $_SESSION['user_id']]);
+                    
+                    // Calculate total paid for this billing
+                    $stmt = $pdo->prepare("SELECT COALESCE(SUM(payment_amount), 0) as total_paid FROM payments WHERE billing_id = ?");
+                    $stmt->execute([$billing_id]);
+                    $total_paid = floatval($stmt->fetchColumn());
+                    
+                    // Get billing amount
+                    $stmt = $pdo->prepare("SELECT billing_amount, plan_id FROM billing WHERE billing_id = ?");
+                    $stmt->execute([$billing_id]);
+                    $billing_row = $stmt->fetch(PDO::FETCH_ASSOC);
+                    $billing_amount = floatval($billing_row['billing_amount'] ?? 0);
+                    $plan_id = $billing_row['plan_id'] ?? null;
+                    
+                    // Update billing payment status
+                    if ($total_paid >= $billing_amount) {
+                        $stmt = $pdo->prepare("UPDATE billing SET payment_status = 'Paid' WHERE billing_id = ?");
+                        $stmt->execute([$billing_id]);
+                        
+                        // Calculate overpayment (advance payment) and add to credit balance
+                        $overpayment = $total_paid - $billing_amount;
+                        if ($overpayment > 0.01) { // Use small threshold to avoid floating point issues
+                            $stmt = $pdo->prepare("UPDATE members SET credit_balance = credit_balance + ? WHERE member_id = ?");
+                            $stmt->execute([$overpayment, $member_id]);
+                        }
+                        
+                        // Activate membership plan if plan_id exists
+                        if ($plan_id) {
+                            $stmt = $pdo->prepare("SELECT duration_days FROM membership_plans WHERE plan_id = ?");
+                            $stmt->execute([$plan_id]);
+                            $plan = $stmt->fetch(PDO::FETCH_ASSOC);
+                            
+                            if ($plan) {
+                                $start_date = date('Y-m-d');
+                                $end_date = date('Y-m-d', strtotime('+' . $plan['duration_days'] . ' days'));
+                                
+                                // Update member's plan dates
+                                $stmt = $pdo->prepare("UPDATE members SET membership_plan = ?, membership_start_date = ?, membership_end_date = ?, membership_status = 'Active' WHERE member_id = ?");
+                                $stmt->execute([$plan_id, $start_date, $end_date, $member_id]);
+                            }
+                        }
+                    } elseif ($total_paid > 0) {
+                        $stmt = $pdo->prepare("UPDATE billing SET payment_status = 'Partial' WHERE billing_id = ?");
+                        $stmt->execute([$billing_id]);
+                    }
+                    
+                    // Return success for AJAX
+                    if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+                        header('Content-Type: application/json');
+                        echo json_encode(['success' => true, 'message' => 'Payment recorded successfully']);
+                        exit();
+                    } else {
+                        header('Location: billing.php?success=Payment recorded successfully');
+                        exit();
+                    }
+                } catch (PDOException $e) {
+                    if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+                        header('Content-Type: application/json');
+                        echo json_encode(['success' => false, 'error' => 'Database error: ' . $e->getMessage()]);
+                        exit();
+                    } else {
+                        header('Location: billing.php?error=' . urlencode('Error recording payment: ' . $e->getMessage()));
+                        exit();
+                    }
+                }
                 break;
         }
     }
@@ -60,6 +239,136 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 $search = isset($_GET['search']) ? sanitizeInput($_GET['search']) : '';
 $status_filter = isset($_GET['status']) ? sanitizeInput($_GET['status']) : '';
 $type_filter = isset($_GET['type']) ? sanitizeInput($_GET['type']) : '';
+
+// AJAX: return recent bills for a specific member
+if (isset($_GET['member_id']) && isset($_GET['fetch_recent'])) {
+    $mid = sanitizeInput($_GET['member_id']);
+    $stmt = $pdo->prepare("SELECT billing_id, billing_amount, due_date, payment_status, created_at FROM billing WHERE member_id = ? ORDER BY created_at DESC LIMIT 10");
+    $stmt->execute([$mid]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    header('Content-Type: application/json');
+    echo json_encode(['success' => true, 'bills' => $rows]);
+    exit();
+}
+
+// AJAX: return bill details with payment info
+if (isset($_GET['billing_id']) && isset($_GET['fetch_details'])) {
+    $bid = sanitizeInput($_GET['billing_id']);
+    $stmt = $pdo->prepare("SELECT b.billing_amount, b.plan_id, p.price as plan_amount FROM billing b LEFT JOIN membership_plans p ON b.plan_id = p.plan_id WHERE b.billing_id = ?");
+    $stmt->execute([$bid]);
+    $bill = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if ($bill) {
+        // Calculate total paid
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(payment_amount), 0) as total_paid FROM payments WHERE billing_id = ?");
+        $stmt->execute([$bid]);
+        $paid = floatval($stmt->fetchColumn());
+        
+        $billing_amount = floatval($bill['billing_amount']);
+        $plan_amount = floatval($bill['plan_amount'] ?? 0);
+        $balance = max(0, $billing_amount - $paid);
+        
+        header('Content-Type: application/json');
+        echo json_encode([
+            'success' => true,
+            'billing_amount' => $billing_amount,
+            'plan_amount' => $plan_amount,
+            'paid_amount' => $paid,
+            'balance' => $balance
+        ]);
+    } else {
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'error' => 'Bill not found']);
+    }
+    exit();
+}
+
+// AJAX: return payment history for a billing
+if (isset($_GET['billing_id']) && isset($_GET['fetch_payments'])) {
+    $bid = sanitizeInput($_GET['billing_id']);
+    $stmt = $pdo->prepare("SELECT payment_id, payment_amount, payment_date, payment_type, transaction_id, payment_method FROM payments WHERE billing_id = ? ORDER BY payment_date DESC");
+    $stmt->execute([$bid]);
+    $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    header('Content-Type: application/json');
+    echo json_encode(['success' => true, 'payments' => $payments]);
+    exit();
+}
+
+// AJAX: return member credit balance
+if (isset($_GET['member_id']) && isset($_GET['fetch_credit'])) {
+    $mid = sanitizeInput($_GET['member_id']);
+    $stmt = $pdo->prepare("SELECT credit_balance FROM members WHERE member_id = ?");
+    $stmt->execute([$mid]);
+    $credit = floatval($stmt->fetchColumn() ?? 0);
+    header('Content-Type: application/json');
+    echo json_encode(['success' => true, 'credit_balance' => $credit]);
+    exit();
+}
+
+// AJAX: return latest vital signs for a member
+if (isset($_GET['member_id']) && isset($_GET['fetch_vitals'])) {
+    $mid = sanitizeInput($_GET['member_id']);
+    $stmt = $pdo->prepare("SELECT date_of_recording, weight, height_cm, bmi, blood_pressure_systolic, blood_pressure_diastolic, heart_rate, trainer_id FROM vital_signs WHERE member_id = ? ORDER BY date_of_recording DESC LIMIT 1");
+    $stmt->execute([$mid]);
+    $vitals = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if ($vitals) {
+        // Get trainer name
+        $trainer_name = '';
+        if (!empty($vitals['trainer_id'])) {
+            $trainer_stmt = $pdo->prepare("SELECT CONCAT(first_name, ' ', last_name) as name FROM trainers WHERE trainer_id = ?");
+            $trainer_stmt->execute([$vitals['trainer_id']]);
+            $trainer_result = $trainer_stmt->fetch(PDO::FETCH_ASSOC);
+            $trainer_name = $trainer_result['name'] ?? '-';
+        }
+        
+        header('Content-Type: application/json');
+        echo json_encode([
+            'success' => true,
+            'date_of_recording' => $vitals['date_of_recording'] ?? '-',
+            'weight' => !empty($vitals['weight']) ? $vitals['weight'] : '-',
+            'height' => !empty($vitals['height_cm']) ? $vitals['height_cm'] : '-',
+            'bmi' => !empty($vitals['bmi']) ? $vitals['bmi'] : '-',
+            'blood_pressure_systolic' => $vitals['blood_pressure_systolic'] ?? '-',
+            'blood_pressure_diastolic' => $vitals['blood_pressure_diastolic'] ?? '-',
+            'heart_rate' => $vitals['heart_rate'] ?? '-',
+            'trainer_name' => $trainer_name
+        ]);
+    } else {
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'error' => 'No vital signs recorded']);
+    }
+    exit();
+}
+
+// AJAX: Record vital signs for a member
+if (isset($_POST['action']) && $_POST['action'] === 'add_vital_signs') {
+    $member_id = sanitizeInput($_POST['member_id']);
+    $date_of_recording = sanitizeInput($_POST['date_of_recording']);
+    $weight = !empty($_POST['weight']) ? floatval($_POST['weight']) : null;
+    $height = !empty($_POST['height']) ? floatval($_POST['height']) : null;
+    $bmi = !empty($_POST['bmi']) ? floatval($_POST['bmi']) : null;
+    $blood_pressure_systolic = !empty($_POST['blood_pressure_systolic']) ? intval($_POST['blood_pressure_systolic']) : null;
+    $blood_pressure_diastolic = !empty($_POST['blood_pressure_diastolic']) ? intval($_POST['blood_pressure_diastolic']) : null;
+    $heart_rate = !empty($_POST['heart_rate']) ? intval($_POST['heart_rate']) : null;
+    $trainer_id = isset($_SESSION['user_id']) ? $_SESSION['user_id'] : null;
+    
+    try {
+        // Generate unique record_id
+        $record_id = uniqid('VS_', true);
+        
+        $stmt = $pdo->prepare("INSERT INTO vital_signs (record_id, member_id, date_of_recording, weight, height_cm, bmi, blood_pressure_systolic, blood_pressure_diastolic, heart_rate, trainer_id, created_at) 
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())");
+        $stmt->execute([$record_id, $member_id, $date_of_recording, $weight, $height, $bmi, $blood_pressure_systolic, $blood_pressure_diastolic, $heart_rate, $trainer_id]);
+        
+        header('Content-Type: application/json');
+        echo json_encode(['success' => true, 'message' => 'Vital signs recorded successfully']);
+    } catch (Exception $e) {
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'error' => 'Failed to record vital signs: ' . $e->getMessage()]);
+    }
+    exit();
+}
 
 // Build query
 $where_conditions = [];
@@ -87,9 +396,9 @@ if (!empty($status_filter)) {
 
 $where_clause = !empty($where_conditions) ? "WHERE " . implode(" AND ", $where_conditions) : "";
 
-// Get billing records - use b.* to get all columns, alias payment_amount as amount for compatibility
+// Get billing records - use b.* to get all columns, alias billing_amount as amount for compatibility
 $sql = "SELECT b.*, 
-    b.payment_amount as amount,
+    b.billing_amount as amount,
     m.first_name, m.middle_name, m.last_name,
     p.plan_type, p.plan_name
     FROM billing b 
@@ -110,10 +419,10 @@ $stats = [
 ];
 
 $stmt = $pdo->query("SELECT 
-    SUM(CASE WHEN payment_status = 'Paid' THEN payment_amount ELSE 0 END) as total_revenue,
+    SUM(CASE WHEN payment_status = 'Paid' THEN billing_amount ELSE 0 END) as total_revenue,
     COUNT(CASE WHEN payment_status = 'Pending' THEN 1 END) as pending_payments,
     COUNT(CASE WHEN payment_status = 'Overdue' THEN 1 END) as overdue_payments,
-    SUM(CASE WHEN payment_status = 'Paid' AND MONTH(payment_date) = MONTH(CURDATE()) AND YEAR(payment_date) = YEAR(CURDATE()) THEN payment_amount ELSE 0 END) as this_month_revenue
+    SUM(CASE WHEN payment_status = 'Paid' AND MONTH(payment_date) = MONTH(CURDATE()) AND YEAR(payment_date) = YEAR(CURDATE()) THEN billing_amount ELSE 0 END) as this_month_revenue
     FROM billing");
 $stats = $stmt->fetch();
 

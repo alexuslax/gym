@@ -3986,3 +3986,127 @@ img[class*="w-"], img[class*="h-"] {
   font-style: italic;
 }
 
+/* Search Dropdown Styles */
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-bottom: 1px solid var(--gray-100);
+}
+
+.dropdown-item:hover {
+  background-color: var(--blue-50);
+  border-bottom-color: var(--blue-200);
+}
+
+.dropdown-item.selected {
+  background-color: var(--blue-100) !important;
+  border-bottom-color: var(--blue-300) !important;
+}
+
+.dropdown-item-name {
+  font-weight: 500;
+  color: var(--gray-900);
+}
+
+.dropdown-item-name mark {
+  background-color: var(--yellow-200) !important;
+  color: var(--gray-900) !important;
+  padding: 0 2px !important;
+  border-radius: 2px !important;
+}
+
+/* Enhanced Search Input */
+.search-input-container {
+  position: relative;
+}
+
+.search-input-container .form-input {
+  padding-right: 3rem;
+  transition: all 0.2s ease;
+}
+
+.search-input-container .form-input:focus {
+  border-color: var(--blue-500);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.search-input-icon {
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--gray-400);
+  pointer-events: none;
+  transition: color 0.2s ease;
+}
+
+.search-input-container .form-input:focus + .search-input-icon {
+  color: var(--blue-500);
+}
+
+/* Search Form Enhancements */
+.search-form-container {
+  background: linear-gradient(135deg, var(--blue-50) 0%, var(--indigo-50) 100%);
+  border: 1px solid var(--blue-200);
+  border-radius: 1rem;
+  padding: 1.5rem;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.search-form-title {
+  color: var(--blue-700);
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+.search-form-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+/* Dropdown Animations */
+#memberDropdown {
+  animation: dropdownFadeIn 0.2s ease-out;
+}
+
+@keyframes dropdownFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Enhanced Button Styles */
+.btn {
+  transition: all 0.2s ease;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px -2px rgba(0, 0, 0, 0.1);
+}
+
+.btn:active {
+  transform: translateY(0);
+}
+
+/* Loading Animation */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+

@@ -830,6 +830,24 @@ $recent_activities = getRecentActivity();
         </svg>
       </div>
     </a>
+
+    <a href="membership_renewal.php" class="quick-access-card quick-access-card-orange">
+      <div class="quick-access-overlay quick-access-overlay-orange" style="background: linear-gradient(135deg, #fed7aa 0%, #ffedd5 100%);"></div>
+      <div style="position: relative; display: flex; align-items: flex-start; gap: 1rem;">
+        <div class="quick-access-icon-container">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="2.5" style="width: 1.75rem; height: 1.75rem;">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>
+          </svg>
+        </div>
+        <div class="quick-access-content">
+          <h2 class="quick-access-title" style="color: #ea580c;">Membership Renewal</h2>
+          <p class="quick-access-description">Track member renewals & expiry dates</p>
+        </div>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="quick-access-arrow" style="color: #ea580c; width: 1.5rem; height: 1.5rem; flex-shrink: 0;">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/>
+        </svg>
+      </div>
+    </a>
   </div>
 
   <!-- Recent Activity / Notifications -->

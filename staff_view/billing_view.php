@@ -25,9 +25,41 @@ if (!$record) {
 
 $fullname = trim($record['first_name'] . ' ' . $record['middle_name'] . ' ' . $record['last_name']);
 $plan = $record['plan_name'] ? $record['plan_name'] . ' (' . $record['plan_type'] . ')' : 'N/A';
-$price = $record['price'] ? '₱' . number_format($record['price'], 2) : '₱' . number_format($record['payment_amount'], 2);
+$price = $record['price'] ? '₱' . number_format($record['price'], 2) : '₱' . number_format($record['billing_amount'], 2);
 $due = $record['due_date'] ? date('F d, Y', strtotime($record['due_date'])) : 'N/A';
 $status = $record['payment_status'] ?? 'Pending';
+
+// Parse additional charges from description
+$additional_charges = [];
+$description = $record['description'] ?? '';
+if (!empty($description) && strpos($description, 'Additional charges:') !== false) {
+    $json_start = strpos($description, '[');
+    if ($json_start !== false) {
+        $json_str = substr($description, $json_start);
+        $decoded = json_decode($json_str, true);
+        if (is_array($decoded)) {
+            $additional_charges = $decoded;
+        }
+    }
+}
+
+// Compute plan amount and totals
+$add_total = 0.0;
+foreach ($additional_charges as $c) {
+    $add_total += floatval($c['amount'] ?? 0);
+}
+
+$plan_amount = null;
+if (!empty($record['price'])) {
+    $plan_amount = floatval($record['price']);
+} elseif (isset($record['billing_amount'])) {
+    // derive plan amount if possible (billing_amount may include additions)
+    $plan_amount = max(0, floatval($record['billing_amount']) - $add_total);
+} else {
+    $plan_amount = 0.0;
+}
+
+$total_amount = $plan_amount + $add_total;
 
 ?>
 <!DOCTYPE html>
@@ -112,13 +144,18 @@ $status = $record['payment_status'] ?? 'Pending';
                 <span style="font-size:0.97em;color:#6b7280;">Member ID: <?php echo htmlspecialchars($record['member_id']); ?></span>
             </td></tr>
             <tr><th>Plan:</th><td><?php echo htmlspecialchars($plan); ?></td></tr>
+            <tr><th>Plan Amount:</th><td style="text-align:right;"><?php echo '₱' . number_format($plan_amount, 2); ?></td></tr>
+            <?php if (!empty($additional_charges)): ?>
+                <tr><th colspan="2" style="background:#f3f4f6;padding-top:1em;">Additional Charges:</th></tr>
+                <?php foreach ($additional_charges as $charge): ?>
+                    <tr><td style="padding-left:2em;"><?php echo htmlspecialchars($charge['name'] ?? 'Unknown'); ?></td><td style="text-align:right;">₱<?php echo number_format($charge['amount'] ?? 0, 2); ?></td></tr>
+                <?php endforeach; ?>
+            <?php endif; ?>
             <tr><th>Due Date:</th><td><?php echo htmlspecialchars($due); ?></td></tr>
-            <tr><th>Description:</th><td><?php echo htmlspecialchars($record['description']); ?></td></tr>
         </table>
-        <div class="bill-total">Total: <?php echo $price; ?></div>
+        <div class="bill-total">Total: <?php echo '₱' . number_format($total_amount, 2); ?></div>
         <div class="bill-actions">
             <button onclick="window.print()">🖨️ Print Bill</button>
-            <button onclick="window.location.href='billing.php'">Close</button>
         </div>
     </div>
 </body>

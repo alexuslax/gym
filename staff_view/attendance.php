@@ -2,10 +2,75 @@
 session_start();
 require_once '../config/functions.php';
 
+// AJAX: fetch latest attendance for a member
+if (isset($_GET['member_id']) && isset($_GET['fetch_attendance'])) {
+    $member_id = sanitizeInput($_GET['member_id']);
+    $stmt = $pdo->prepare("SELECT date, time_in, time_out, status FROM attendance WHERE member_id = ? ORDER BY date DESC, time_in DESC LIMIT 10");
+    $stmt->execute([$member_id]);
+    $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmt = $pdo->prepare("SELECT attendance_id, time_in FROM attendance WHERE member_id = ? AND date = ? AND time_out IS NULL ORDER BY time_in DESC LIMIT 1");
+    $stmt->execute([$member_id, date('Y-m-d')]);
+    $active = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    header('Content-Type: application/json');
+    echo json_encode([
+        'success' => true,
+        'records' => $records,
+        'active' => $active ? ['checked_in' => true, 'time_in' => $active['time_in']] : ['checked_in' => false]
+    ]);
+    exit();
+}
+
 // Handle form submissions
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if (isset($_POST['action'])) {
         switch ($_POST['action']) {
+            case 'member_time_in':
+                $member_id = sanitizeInput($_POST['member_id']);
+                $date = date('Y-m-d');
+                $time_in = date('H:i:s');
+                try {
+                    $stmt = $pdo->prepare("SELECT attendance_id FROM attendance WHERE member_id = ? AND date = ? AND time_out IS NULL ORDER BY time_in DESC LIMIT 1");
+                    $stmt->execute([$member_id, $date]);
+                    $active = $stmt->fetch(PDO::FETCH_ASSOC);
+                    if ($active) {
+                        header('Content-Type: application/json');
+                        echo json_encode(['success' => false, 'error' => 'Member is already checked in today.']);
+                        exit();
+                    }
+                    $status = 'Present';
+                    $stmt = $pdo->prepare("INSERT INTO attendance (member_id, date, time_in, status) VALUES (?, ?, ?, ?)");
+                    $stmt->execute([$member_id, $date, $time_in, $status]);
+                    header('Content-Type: application/json');
+                    echo json_encode(['success' => true]);
+                    exit();
+                } catch (PDOException $e) {
+                    header('Content-Type: application/json');
+                    echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+                    exit();
+                }
+                break;
+            case 'member_time_out':
+                $member_id = sanitizeInput($_POST['member_id']);
+                $date = date('Y-m-d');
+                try {
+                    $stmt = $pdo->prepare("UPDATE attendance SET time_out = ? WHERE member_id = ? AND date = ? AND time_out IS NULL");
+                    $stmt->execute([date('H:i:s'), $member_id, $date]);
+                    if ($stmt->rowCount() === 0) {
+                        header('Content-Type: application/json');
+                        echo json_encode(['success' => false, 'error' => 'No active check-in found for today.']);
+                        exit();
+                    }
+                    header('Content-Type: application/json');
+                    echo json_encode(['success' => true]);
+                    exit();
+                } catch (PDOException $e) {
+                    header('Content-Type: application/json');
+                    echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+                    exit();
+                }
+                break;
             case 'manual_check_out':
                 $member_id = sanitizeInput($_POST['member_id']);
                 $date = sanitizeInput($_POST['date']);

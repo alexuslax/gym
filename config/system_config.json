@@ -1,0 +1,13 @@
+{
+    "system_name": "UEP Fitness Gym",
+    "logo": "",
+    "date_time_format": "m/d/Y h:i A",
+    "session_timeout_minutes": 30,
+    "password_rules": {
+        "min_length": 8,
+        "require_number": true,
+        "require_special": false,
+        "require_upper": true,
+        "require_lower": true
+    }
+}

@@ -4,6 +4,9 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 require_once 'database.php';
 
+// Use Philippines time for all server-side date/time operations
+date_default_timezone_set('Asia/Manila');
+
 // Function to sanitize input data
 function sanitizeInput($data) {
     $data = trim($data);

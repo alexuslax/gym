@@ -162,7 +162,7 @@ document.addEventListener('DOMContentLoaded', () => {
       console.log('Staff form should be visible now');
     });
   } else {
-    console.error('Staff button not found!');
+    // Staff button intentionally removed — no action required.
   }
 
   // Back to role selection from student form

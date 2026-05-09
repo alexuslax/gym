@@ -77,14 +77,14 @@ CREATE TABLE `billing` (
   `transaction_id` varchar(100) DEFAULT NULL,
   `description` text DEFAULT NULL,
   `created_by` varchar(10) DEFAULT NULL,
-  `payment_amount` decimal(10,2) NOT NULL
+  `billing_amount` decimal(10,2) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
 -- Dumping data for table `billing`
 --
 
-INSERT INTO `billing` (`billing_id`, `member_id`, `plan_id`, `payment_status`, `payment_date`, `due_date`, `created_at`, `transaction_id`, `description`, `created_by`, `payment_amount`) VALUES
+INSERT INTO `billing` (`billing_id`, `member_id`, `plan_id`, `payment_status`, `payment_date`, `due_date`, `created_at`, `transaction_id`, `description`, `created_by`, `billing_amount`) VALUES
 (1, 'MEM0001', 1, 'Paid', '2026-01-08', '2026-01-16', '2026-01-07 20:42:52', '0002', 'good', 'USR0001', 100.00),
 (3, 'MEM0001', 3, 'Paid', '2026-01-08', '2026-07-07', '2026-01-08 11:54:04', '001', 'eww', 'USR0001', 3000.00);
 
