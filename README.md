@@ -44,13 +44,12 @@ A web-based system for managing gym memberships, staff, trainers, and members �
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git
+   git clone https://github.com/alexuslax/gym.git
    ```
 
 2. **Move to your server's root directory**
    ```
    XAMPP: C:/xampp/htdocs/
-   Laragon: C:/laragon/www/
    ```
 
 3. **Import the database**
@@ -92,7 +91,7 @@ A web-based system for managing gym memberships, staff, trainers, and members �
 - **PHP** — Backend logic
 - **MySQL** — Database
 - **HTML / CSS / JavaScript** — Frontend
-- **XAMPP / Laragon** — Local development server
+- **XAMPP** — Local development server
 
 ---
 
