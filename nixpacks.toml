@@ -1,2 +1,0 @@
-[start]
-cmd = "frankenphp run --config /app/Caddyfile"
