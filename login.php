@@ -84,6 +84,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     exit();
                 }
             } catch (PDOException $e) {
+                error_log('Login database error: ' . $e->getMessage());
                 $_SESSION['login_error'] = 'Database error. Please try again.';
                 header('Location: login.php');
                 exit();
@@ -819,6 +820,87 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             text-align: center;
         }
 
+        .demo-accounts {
+            margin-top: 1.5rem;
+            padding: 1rem;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.875rem;
+        }
+
+        .demo-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            margin-bottom: 0.875rem;
+        }
+
+        .demo-title {
+            color: #0f172a;
+            font-size: 0.9375rem;
+            font-weight: 700;
+        }
+
+        .demo-note {
+            color: #64748b;
+            font-size: 0.75rem;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .demo-list {
+            display: grid;
+            gap: 0.625rem;
+        }
+
+        .demo-account {
+            display: grid;
+            grid-template-columns: 5rem 1fr;
+            gap: 0.75rem;
+            align-items: center;
+            padding: 0.75rem;
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.75rem;
+        }
+
+        .demo-role {
+            color: #4f46e5;
+            font-size: 0.8125rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .demo-credentials {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.5rem;
+        }
+
+        .demo-field {
+            min-width: 0;
+        }
+
+        .demo-label {
+            display: block;
+            color: #64748b;
+            font-size: 0.6875rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-bottom: 0.125rem;
+        }
+
+        .demo-value {
+            display: block;
+            color: #0f172a;
+            font-size: 0.875rem;
+            font-weight: 700;
+            overflow-wrap: anywhere;
+        }
+
         .role-card {
             padding: 1.5rem;
             border: 2px solid #e2e8f0;
@@ -976,6 +1058,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             .form-title {
                 font-size: 1.5rem;
             }
+
+            .demo-account,
+            .demo-credentials {
+                grid-template-columns: 1fr;
+            }
         }
 
         @media (max-width: 480px) {
@@ -989,6 +1076,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
             .form-panel {
                 padding: 1.5rem 1rem;
+            }
+
+            .demo-header {
+                align-items: flex-start;
+                flex-direction: column;
+                gap: 0.25rem;
+            }
+
+            .demo-note {
+                white-space: normal;
             }
         }
 
@@ -1092,11 +1189,38 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             </form>
 
             <!-- Demo Accounts Section -->
-            <div class="demo-accounts" style="margin-top: 2rem; padding: 1rem; background: #f8f9fa; border-radius: 8px; border: 1px solid #e9ecef;">
-                <h3 style="margin: 0 0 1rem 0; color: #495057; font-size: 1.1rem;">Demo Accounts</h3>
-                <div style="display: grid; gap: 0.5rem; font-size: 0.9rem;">
-                    <div><strong>Staff:</strong> Username: staff, Password: password</div>
-                    <div><strong>Member:</strong> Username: stephwerd, Password: password</div>
+            <div class="demo-accounts">
+                <div class="demo-header">
+                    <h3 class="demo-title">Demo Accounts</h3>
+                    <span class="demo-note">Password for both: password</span>
+                </div>
+                <div class="demo-list">
+                    <div class="demo-account">
+                        <div class="demo-role">Staff</div>
+                        <div class="demo-credentials">
+                            <div class="demo-field">
+                                <span class="demo-label">Username</span>
+                                <span class="demo-value">staff</span>
+                            </div>
+                            <div class="demo-field">
+                                <span class="demo-label">Password</span>
+                                <span class="demo-value">password</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="demo-account">
+                        <div class="demo-role">Member</div>
+                        <div class="demo-credentials">
+                            <div class="demo-field">
+                                <span class="demo-label">Username</span>
+                                <span class="demo-value">stephwerd</span>
+                            </div>
+                            <div class="demo-field">
+                                <span class="demo-label">Password</span>
+                                <span class="demo-value">password</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
